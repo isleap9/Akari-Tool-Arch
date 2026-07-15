@@ -1,71 +1,61 @@
-# Akari Tool Linux — v0.1 skeleton
+# Akari Tool Linux — v0.1
 
-Gaming setup tool for vanilla Arch Linux. Three layers, three files:
+Gaming setup tool for vanilla Arch Linux.
+
+## Structure
 
 ```
 akari-tool-linux/
-├── backend/akari-setup.sh   BASH   — all real logic (check / plan / apply)
-├── ui/Main.qml              QML    — Material dark UI, red accent
-└── main.py                  PYTHON — ~120 lines of glue (QProcess bridge)
+├── backend/
+│   └── akari-setup.sh        # ALL system logic (check / plan / apply) — works standalone
+├── akari/                    # Python host package (glue only, no logic)
+│   ├── app.py                #   Qt app + QML engine bootstrap
+│   ├── bridge.py             #   QProcess bridge to the bash backend
+│   └── __main__.py           #   `python -m akari`
+├── ui/
+│   ├── Main.qml              # window shell: sidebar, header, page routing
+│   ├── components/           # reusable widgets (QML module)
+│   │   ├── qmldir            #   module definition
+│   │   ├── Theme.qml         #   singleton: all colors & metrics live here
+│   │   ├── NavItem.qml
+│   │   ├── StatusCard.qml
+│   │   └── SectionLabel.qml
+│   └── pages/
+│       ├── OverviewPage.qml  # status card grid
+│       └── LogPage.qml       # live backend output
+└── main.py                   # entry point (same as `python -m akari`)
 ```
 
-## Run it (on your Arch machine)
+## Run
 
 ```bash
-sudo pacman -S pyside6        # only runtime dependency besides bash
-cd akari-tool-linux
-python main.py
+sudo pacman -S pyside6
+python main.py        # or: python -m akari
 ```
 
-The backend also works with no GUI at all:
+Backend standalone:
 
 ```bash
-./backend/akari-setup.sh check          # status report
-./backend/akari-setup.sh plan gaming    # dry-run: what would be installed
-./backend/akari-setup.sh apply gaming   # do it
-./backend/akari-setup.sh apply tweaks   # vm.max_map_count + gamemode group
+./backend/akari-setup.sh check
+./backend/akari-setup.sh plan gaming
+./backend/akari-setup.sh apply gaming|multilib|tweaks
 ```
 
-## How the layers talk
+## Conventions
 
-- On launch, Python runs `akari-setup.sh check`. The script prints
-  `key|state|detail` lines; Python parses them into `bridge.status`,
-  which the QML cards read (green/amber/red chips).
-- Card buttons call `bridge.run("apply", "gaming")` etc. The UI swaps to
-  the live log view and streams the script's stdout as it runs.
-- When an apply finishes, `check` re-runs automatically so the cards
-  reflect the new state.
+- **All system logic goes in the bash backend.** Python never runs pacman.
+- **All colors/metrics go in `Theme.qml`.** No hex codes in pages/components.
+- **New page** = new file in `ui/pages/` + a NavItem + a StackLayout entry in Main.qml.
+- **New reusable widget** = file in `ui/components/` + a line in `qmldir`.
+- Backend `check` protocol: one `key|state|detail` line per check,
+  state ∈ ok|warn|fail. The bridge parses these into `bridge.status`.
 
-## Design notes
+## TODO
 
-- **Idempotent**: every apply is safe to run twice (`pacman --needed`,
-  multilib grep-before-edit, sysctl file overwrite).
-- **Every change is logged** to `~/.local/state/akari-tool/changes.log`,
-  and `pacman.conf` is backed up before editing. This is the
-  reliability story vs. linutil.
-- **Package lists are data** (top of the .sh file), derived from
-  CachyOS's `cachyos-gaming-meta` + `cachyos-gaming-applications`,
-  translated to vanilla Arch (wine-staging instead of wine-cachyos,
-  ProtonGE via optional AUR, etc.).
-- **AUR is never a hard dependency** — extras are skipped with a notice
-  if no paru/yay is found.
-- **sudo is per-command**, the app itself never runs as root.
-
-## Roadmap hooks already in place
-
-- Porting the GUI host to Rust = rewrite `main.py` only (~same size in
-  Rust with qmetaobject/cxx-qt). QML + bash are untouched.
-- Sidebar nav items are stubs — Overview is the only page wired up.
-  Gaming / GPU / Tweaks / Change Log pages come next.
-- For AUR distribution: PKGBUILD installs the three files +
-  a .desktop entry; depends on `pyside6`.
-
-## Known TODOs before real use
-
-- NVIDIA driver choice is simplified (`nvidia` package). Add the
-  Turing+ → `nvidia-open`, custom-kernel → `nvidia-dkms` branching.
-- `apply` uses `--noconfirm` for GUI flow; add a `--confirm` mode for
-  standalone CLI use.
-- pacman needs a full `-Syu` consideration before installing on a stale
-  system (partial-upgrade risk) — currently only `-Sy` after enabling
-  multilib.
+- Sidebar navigation between pages (NavItems are visual-only; Overview is
+  the single wired page — add a `currentPage` state in Main.qml)
+- Gaming page: per-package checkbox list (read package sets from backend)
+- NVIDIA branching: nvidia-open (Turing+) / nvidia-dkms (custom kernels)
+- Polkit/pkexec prompt instead of relying on cached sudo
+- `--confirm` mode for CLI use (currently --noconfirm for GUI flow)
+- PKGBUILD for AUR distribution

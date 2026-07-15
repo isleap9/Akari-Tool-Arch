@@ -33,10 +33,56 @@ PKGS_FONTS=( ttf-liberation wqy-zenhei )
 
 PKGS_AUR_OPTIONAL=( heroic-games-launcher-bin protonup-qt goverlay )
 
+# Kernels offered by the Kernel page. source: repo (pacman) or aur.
+# Format: name|source|description
+KERNELS=(
+  "linux|repo|Stock Arch kernel"
+  "linux-zen|repo|Tuned for desktop responsiveness"
+  "linux-lts|repo|Long-term support, most stable"
+  "linux-cachyos|aur|CachyOS: BORE scheduler & gaming optimizations"
+)
+
 # GPU driver sets (chosen by detect_gpu)
 PKGS_GPU_AMD=( mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon )
 PKGS_GPU_INTEL=( mesa lib32-mesa vulkan-intel lib32-vulkan-intel )
-PKGS_GPU_NVIDIA=( nvidia nvidia-utils lib32-nvidia-utils nvidia-settings )
+
+# NVIDIA kernel-module variants, in detection order. Exactly one should be
+# installed; nvidia_kmod_pkg() picks the right one for this system.
+NVIDIA_KMOD_VARIANTS=( nvidia-open-dkms nvidia-open nvidia-dkms nvidia )
+# Common to every variant:
+PKGS_GPU_NVIDIA_COMMON=( nvidia-utils lib32-nvidia-utils nvidia-settings )
+
+# Decide which NVIDIA kernel module package this system should use:
+#  1. If a variant is already installed, respect it.
+#  2. Otherwise prefer the open modules (required for Turing+ / RTX cards,
+#     which is nearly all gaming hardware today):
+#       - stock 'linux' kernel only  -> nvidia-open  (prebuilt)
+#       - any other kernel installed -> nvidia-open-dkms (builds anywhere)
+nvidia_kmod_pkg() {
+  local v
+  for v in "${NVIDIA_KMOD_VARIANTS[@]}"; do
+    is_installed "$v" && { echo "$v"; return; }
+  done
+  local k nonstock=0
+  for k in linux-zen linux-lts linux-hardened linux-rt linux-cachyos; do
+    is_installed "$k" && nonstock=1
+  done
+  if (( nonstock )); then echo nvidia-open-dkms; else echo nvidia-open; fi
+}
+
+# Full NVIDIA package set for this system (variant + common + dkms headers)
+nvidia_pkgs() {
+  local kmod; kmod=$(nvidia_kmod_pkg)
+  local pkgs=( "$kmod" "${PKGS_GPU_NVIDIA_COMMON[@]}" )
+  if [[ $kmod == *dkms* ]]; then
+    # dkms needs headers for every installed kernel
+    local k
+    for k in linux linux-zen linux-lts linux-hardened linux-rt linux-cachyos; do
+      is_installed "$k" && pkgs+=( "${k}-headers" )
+    done
+  fi
+  printf '%s\n' "${pkgs[@]}"
+}
 
 LOGFILE="${XDG_STATE_HOME:-$HOME/.local/state}/akari-tool/changes.log"
 
@@ -113,7 +159,8 @@ check_gpu() {
     case $v in
       amd)    missing=$(missing_from "${PKGS_GPU_AMD[@]}") ;;
       intel)  missing=$(missing_from "${PKGS_GPU_INTEL[@]}") ;;
-      nvidia) missing=$(missing_from "${PKGS_GPU_NVIDIA[@]}") ;;
+      nvidia) local npkgs; mapfile -t npkgs < <(nvidia_pkgs)
+              missing=$(missing_from "${npkgs[@]}") ;;
     esac
     if [[ -z "$missing" ]]; then
       emit "gpu_$v" ok "$v drivers installed"
@@ -154,6 +201,28 @@ check_tweaks() {
   fi
 }
 
+# Steam's search path for custom Proton builds
+proton_dir() { echo "${AKARI_COMPAT_DIR:-$HOME/.steam/root/compatibilitytools.d}"; }
+
+# Newest installed GE-Proton version, or empty
+proton_installed_version() {
+  local d
+  d=$(ls -d "$(proton_dir)"/GE-Proton* 2>/dev/null | sort -V | tail -1) || true
+  [[ -n "$d" ]] && basename "$d"
+  return 0   # empty result is not an error (set -e safety)
+}
+
+check_proton() {
+  local v; v=$(proton_installed_version)
+  if [[ -n "$v" ]]; then
+    emit proton ok "$v installed"
+  elif is_installed protonup-qt; then
+    emit proton warn "No custom Proton yet — open ProtonUp-Qt to install GE-Proton"
+  else
+    emit proton warn "Proton-GE not installed (Steam's built-in Proton still works)"
+  fi
+}
+
 cmd_check() {
   check_arch
   check_root
@@ -161,8 +230,147 @@ cmd_check() {
   check_multilib
   check_gpu
   check_gaming
+  check_proton
   check_aur_helper
   check_tweaks
+}
+
+# Emit every known package with group + install state: PKG|group|name|1/0
+# Used by the GUI's Gaming page.
+cmd_packages() {
+  local p
+  for p in "${PKGS_CORE[@]}";  do emit_pkg core  "$p"; done
+  for p in "${PKGS_DEPS[@]}";  do emit_pkg deps  "$p"; done
+  for p in "${PKGS_FONTS[@]}"; do emit_pkg fonts "$p"; done
+  local vendors v
+  vendors=$(detect_gpu)
+  for v in $vendors; do
+    case $v in
+      amd)    for p in "${PKGS_GPU_AMD[@]}";    do emit_pkg gpu "$p"; done ;;
+      intel)  for p in "${PKGS_GPU_INTEL[@]}";  do emit_pkg gpu "$p"; done ;;
+      nvidia) local npkgs; mapfile -t npkgs < <(nvidia_pkgs)
+              for p in "${npkgs[@]}";           do emit_pkg gpu "$p"; done ;;
+    esac
+  done
+  if command -v paru &>/dev/null || command -v yay &>/dev/null; then
+    for p in "${PKGS_AUR_OPTIONAL[@]}"; do emit_pkg aur "$p"; done
+  fi
+}
+
+emit_pkg() {
+  printf 'PKG|%s|%s|%d\n' "$1" "$2" "$(is_installed "$2" && echo 1 || echo 0)"
+}
+
+# Kernel currently booted, mapped to its package name
+running_kernel() {
+  local r; r=$(uname -r)
+  case "$r" in
+    *cachyos*)  echo linux-cachyos ;;
+    *zen*)      echo linux-zen ;;
+    *lts*)      echo linux-lts ;;
+    *hardened*) echo linux-hardened ;;
+    *)          echo linux ;;
+  esac
+}
+
+# Emit kernel list: KRN|name|source|description|installed|running
+cmd_kernels() {
+  local entry name source desc run
+  run=$(running_kernel)
+  for entry in "${KERNELS[@]}"; do
+    IFS='|' read -r name source desc <<<"$entry"
+    printf 'KRN|%s|%s|%s|%d|%d\n' "$name" "$source" "$desc" \
+      "$(is_installed "$name" && echo 1 || echo 0)" \
+      "$([[ $name == "$run" ]] && echo 1 || echo 0)"
+  done
+}
+
+# Update the bootloader menu so a newly installed kernel is bootable.
+update_bootloader() {
+  if [[ -d /boot/grub ]]; then
+    echo ":: GRUB detected — regenerating grub.cfg"
+    sudo grub-mkconfig -o /boot/grub/grub.cfg
+    log_change "regenerated grub.cfg after kernel install"
+  elif command -v bootctl &>/dev/null && sudo bootctl is-installed &>/dev/null; then
+    echo ":: systemd-boot detected."
+    echo "   NOTE: systemd-boot entries are not auto-generated. If you don't"
+    echo "   use kernel-install hooks, add an entry in /boot/loader/entries/"
+    echo "   for the new kernel before rebooting into it."
+  else
+    echo ":: Could not identify bootloader — update its menu manually if needed."
+  fi
+}
+
+# Install a kernel (+ headers) alongside the current one. NEVER removes
+# the running kernel — the user picks the new one from the boot menu.
+apply_kernel() {
+  local name="${1:-}"
+  local entry n s found="" source=""
+  for entry in "${KERNELS[@]}"; do
+    IFS='|' read -r n s _ <<<"$entry"
+    [[ $n == "$name" ]] && { found=$n; source=$s; }
+  done
+  [[ -z "$found" ]] && { echo "Unknown kernel: $name" >&2; return 1; }
+
+  if is_installed "$name"; then
+    echo ":: $name is already installed."
+  elif [[ $source == repo ]]; then
+    echo ":: Installing $name + ${name}-headers via pacman"
+    sudo pacman -S --needed --noconfirm "$name" "${name}-headers"
+    log_change "installed kernel: $name"
+  else
+    local helper=""
+    command -v paru &>/dev/null && helper=paru
+    [[ -z "$helper" ]] && command -v yay &>/dev/null && helper=yay
+    if [[ -z "$helper" ]]; then
+      echo ":: $name comes from the AUR and no AUR helper was found." >&2
+      echo "   Install paru or yay first, or use the CachyOS repos." >&2
+      return 1
+    fi
+    echo ":: Installing $name + ${name}-headers via $helper (this compiles — can take a long time)"
+    "$helper" -S --needed --noconfirm "$name" "${name}-headers"
+    log_change "installed kernel via AUR: $name"
+  fi
+
+  update_bootloader
+
+  echo ":: Done. '$name' was installed ALONGSIDE your current kernel —"
+  echo "   nothing was removed. Select it in the boot menu on next reboot."
+  echo "   (dkms drivers like nvidia-open-dkms rebuild for it automatically.)"
+}
+
+# Install an explicit, user-selected package list. AUR-group packages go
+# through the helper; everything else through pacman.
+apply_selected() {
+  shift  # drop the 'selected' target word
+  [[ $# -eq 0 ]] && { echo "Nothing selected."; return 0; }
+
+  grep -Eq '^\s*\[multilib\]' /etc/pacman.conf 2>/dev/null || apply_multilib
+
+  local repo=() aurp=() p known_aur=" ${PKGS_AUR_OPTIONAL[*]} "
+  for p in "$@"; do
+    if [[ $known_aur == *" $p "* ]]; then aurp+=("$p"); else repo+=("$p"); fi
+  done
+
+  if ((${#repo[@]})); then
+    echo ":: Installing ${#repo[@]} packages via pacman"
+    sudo pacman -S --needed --noconfirm "${repo[@]}"
+    log_change "installed selected packages: ${repo[*]}"
+  fi
+  if ((${#aurp[@]})); then
+    local helper=""
+    command -v paru &>/dev/null && helper=paru
+    [[ -z "$helper" ]] && command -v yay &>/dev/null && helper=yay
+    if [[ -n "$helper" ]]; then
+      echo ":: Installing ${#aurp[@]} AUR packages via $helper"
+      "$helper" -S --needed --noconfirm "${aurp[@]}" || \
+        echo ":: (AUR install failed — continuing)"
+      log_change "installed selected AUR packages: ${aurp[*]}"
+    else
+      echo ":: No AUR helper — skipped: ${aurp[*]}"
+    fi
+  fi
+  echo ":: Selected install complete."
 }
 
 # ---------------------------------------------------------------- plan/apply
@@ -179,7 +387,8 @@ plan_gaming() {
     case $v in
       amd)    m=$(missing_from "${PKGS_GPU_AMD[@]}") ;;
       intel)  m=$(missing_from "${PKGS_GPU_INTEL[@]}") ;;
-      nvidia) m=$(missing_from "${PKGS_GPU_NVIDIA[@]}") ;;
+      nvidia) local npkgs; mapfile -t npkgs < <(nvidia_pkgs)
+              m=$(missing_from "${npkgs[@]}") ;;
       *)      continue ;;
     esac
     [[ -n "$m" ]] && { echo "GPU ($v) drivers to install:"; echo "$m" | sed 's/^/  /'; }
@@ -212,7 +421,8 @@ apply_gaming() {
     case $v in
       amd)    pkgs+=( "${PKGS_GPU_AMD[@]}" ) ;;
       intel)  pkgs+=( "${PKGS_GPU_INTEL[@]}" ) ;;
-      nvidia) pkgs+=( "${PKGS_GPU_NVIDIA[@]}" ) ;;
+      nvidia) local npkgs; mapfile -t npkgs < <(nvidia_pkgs)
+              pkgs+=( "${npkgs[@]}" ) ;;
     esac
   done
 
@@ -261,16 +471,93 @@ apply_tweaks() {
   echo ":: Tweaks applied. Changes are logged in $LOGFILE"
 }
 
+plan_multilib() {
+  echo "== Plan: enable multilib =="
+  if grep -Eq '^\s*\[multilib\]' /etc/pacman.conf 2>/dev/null; then
+    echo "multilib is already enabled — nothing to do."
+  else
+    echo "Will do:"
+    echo "  1. Back up /etc/pacman.conf to /etc/pacman.conf.akari.bak"
+    echo "  2. Uncomment the [multilib] block"
+    echo "  3. Run 'pacman -Sy' to sync the new repository"
+  fi
+}
+
+plan_tweaks() {
+  echo "== Plan: performance tweaks =="
+  echo "Will do:"
+  echo "  1. Write /etc/sysctl.d/80-akari-gaming.conf"
+  echo "     (vm.max_map_count = 1048576 — same value SteamOS ships)"
+  echo "  2. Reload sysctl settings"
+  if is_installed gamemode && ! id -nG "$USER" | grep -qw gamemode; then
+    echo "  3. Add $USER to the 'gamemode' group (takes effect next login)"
+  fi
+  echo "All changes are logged and reversible."
+}
+
+plan_kernel() {
+  local name="${1:-}"
+  local entry n s d found="" source="" desc=""
+  for entry in "${KERNELS[@]}"; do
+    IFS='|' read -r n s d <<<"$entry"
+    [[ $n == "$name" ]] && { found=$n; source=$s; desc=$d; }
+  done
+  [[ -z "$found" ]] && { echo "Unknown kernel: $name"; return 1; }
+
+  echo "== Plan: install $name =="
+  echo "$desc"
+  echo ""
+  if is_installed "$name"; then
+    echo "$name is already installed — only the bootloader menu will be refreshed."
+  else
+    if [[ $source == repo ]]; then
+      echo "Will install via pacman:  $name  ${name}-headers"
+    else
+      echo "Will build & install via AUR helper:  $name  ${name}-headers"
+      echo "(compiling a kernel — expect a long build time)"
+    fi
+    echo ""
+    if [[ -d /boot/grub ]]; then
+      echo "Bootloader: GRUB — grub.cfg will be regenerated automatically."
+    else
+      echo "Bootloader: menu update will be attempted; systemd-boot users may"
+      echo "need to add a loader entry manually."
+    fi
+    echo ""
+    echo "Your current kernel stays installed. Nothing is removed."
+  fi
+}
+
+cmd_log() {
+  if [[ -s "$LOGFILE" ]]; then
+    cat "$LOGFILE"
+  else
+    echo "No changes recorded yet."
+    echo "Every change Akari Tool makes to this system will be listed here."
+  fi
+}
+
 # ---------------------------------------------------------------- dispatch
 
 case "${1:-}" in
-  check)  cmd_check ;;
-  plan)   case "${2:-gaming}" in gaming) plan_gaming ;; *) echo "unknown plan target"; exit 1 ;; esac ;;
+  check)    cmd_check ;;
+  packages) cmd_packages ;;
+  kernels)  cmd_kernels ;;
+  log)      cmd_log ;;
+  plan)   case "${2:-gaming}" in
+            gaming)   plan_gaming ;;
+            multilib) plan_multilib ;;
+            tweaks)   plan_tweaks ;;
+            kernel)   plan_kernel "${3:-}" ;;
+            *) echo "unknown plan target"; exit 1 ;;
+          esac ;;
   apply)  case "${2:-}" in
             gaming)   apply_gaming ;;
             multilib) apply_multilib ;;
             tweaks)   apply_tweaks ;;
-            *) echo "usage: $0 apply {gaming|multilib|tweaks}"; exit 1 ;;
+            kernel)   apply_kernel "${3:-}" ;;
+            selected) shift; apply_selected "$@" ;;
+            *) echo "usage: $0 apply {gaming|multilib|tweaks|kernel <name>|selected pkg...}"; exit 1 ;;
           esac ;;
-  *) echo "usage: $0 {check|plan gaming|apply {gaming|multilib|tweaks}}"; exit 1 ;;
+  *) echo "usage: $0 {check|packages|kernels|plan gaming|apply {gaming|multilib|tweaks|kernel <name>|selected pkg...}}"; exit 1 ;;
 esac
