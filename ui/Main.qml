@@ -46,13 +46,14 @@ ApplicationWindow {
                     Layout.bottomMargin: 18
                     Layout.topMargin: 6
                     spacing: 8
-                    Rectangle {
-                        width: 22; height: 22; radius: 4
-                        color: Theme.accent
-                        Label {
-                            anchors.centerIn: parent
-                            text: "A"; font.bold: true; color: "white"
-                        }
+                    Image {
+                        source: "resources/AkariMark.png"
+                        sourceSize.width: 26
+                        sourceSize.height: 26
+                        Layout.preferredWidth: 26
+                        Layout.preferredHeight: 26
+                        fillMode: Image.PreserveAspectFit
+                        smooth: true
                     }
                     Label {
                         text: "AKARI TOOL"
@@ -82,11 +83,18 @@ ApplicationWindow {
                     onNavigate: root.currentPage = 2
                 }
 
+                SectionLabel { text: "HEALTH" }
+                NavItem {
+                    label: "Diagnose"; glyph: "\u2695"
+                    selected: root.currentPage === 3 && !root.showLog
+                    onNavigate: root.currentPage = 3
+                }
+
                 SectionLabel { text: "ADVANCED" }
                 NavItem {
                     label: "Change Log"; glyph: "\u2630"
-                    selected: root.currentPage === 3 && !root.showLog
-                    onNavigate: root.currentPage = 3
+                    selected: root.currentPage === 4 && !root.showLog
+                    onNavigate: root.currentPage = 4
                 }
 
                 Item { Layout.fillHeight: true }
@@ -114,7 +122,8 @@ ApplicationWindow {
                     text: root.showLog ? "Running" :
                           root.currentPage === 1 ? "Gaming Packages" :
                           root.currentPage === 2 ? "Kernel" :
-                          root.currentPage === 3 ? "Change Log" : "Akari Tool"
+                          root.currentPage === 3 ? "Diagnose" :
+                          root.currentPage === 4 ? "Change Log" : "Akari Tool"
                     font.pixelSize: 28; font.bold: true
                 }
                 Label {
@@ -124,6 +133,8 @@ ApplicationWindow {
                           : root.currentPage === 2
                           ? "Install an alternative kernel for gaming or stability"
                           : root.currentPage === 3
+                          ? "Functional tests of the gaming stack"
+                          : root.currentPage === 4
                           ? "A record of everything this tool changed"
                           : "Gaming setup for vanilla Arch — dependencies, drivers & tweaks"
                     color: Theme.textSecondary; font.pixelSize: 13
@@ -133,11 +144,12 @@ ApplicationWindow {
             StackLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                currentIndex: root.showLog ? 4 : root.currentPage
+                currentIndex: root.showLog ? 5 : root.currentPage
 
                 OverviewPage  { confirmDialog: confirmDlg }
                 GamingPage    { confirmDialog: confirmDlg }
                 KernelPage    { confirmDialog: confirmDlg }
+                DiagnosePage  {}
                 ChangeLogPage {}
 
                 LogPage {

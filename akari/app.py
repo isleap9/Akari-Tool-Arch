@@ -2,7 +2,7 @@
 import sys
 from pathlib import Path
 
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QGuiApplication, QIcon
 from PySide6.QtQml import QQmlApplicationEngine
 
 from .bridge import Bridge
@@ -14,6 +14,8 @@ def main() -> int:
     app = QGuiApplication(sys.argv)
     app.setApplicationName("Akari Tool Linux")
     app.setOrganizationName("Akari")
+    app.setDesktopFileName("akari-tool")   # matches future .desktop file
+    app.setWindowIcon(QIcon(str(UI_DIR / "resources" / "AkariMark.png")))
 
     bridge = Bridge()
 
@@ -25,4 +27,5 @@ def main() -> int:
         return 1
 
     bridge.run("check", "")                    # initial status scan
+    bridge.runDiagnose()                       # feeds the Overview summary
     return app.exec()

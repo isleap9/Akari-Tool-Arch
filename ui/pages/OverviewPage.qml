@@ -28,6 +28,20 @@ Flickable {
                 return "ok"
         return "unknown"
     }
+    function diagCounts() {
+        var ok = 0, warn = 0, fail = 0
+        for (var i = 0; i < bridge.diagnostics.length; i++) {
+            var st = bridge.diagnostics[i].state
+            if (st === "ok") ok++
+            else if (st === "fail") fail++
+            else warn++
+        }
+        return { ok: ok, warn: warn, fail: fail, total: bridge.diagnostics.length }
+    }
+    function needsSetup() {
+        return statusState("gaming") === "warn" || statusState("multilib") === "warn"
+               || statusState("tweaks") === "warn"
+    }
     function gpuSummary() {
         var parts = []
         for (var k in bridge.status)
@@ -60,10 +74,13 @@ Flickable {
             title: "Gaming Packages"
             subtitle: page.statusDetail("gaming")
             state_: page.statusState("gaming")
-            actionText: "Set up gaming"
+            actionText: page.needsSetup() ? "Set up everything" : "Set up gaming"
             busy: bridge.running
-            onAction: page.confirmDialog.openWith("Set up gaming", "gaming",
-                          function() { bridge.run("apply", "gaming") })
+            onAction: page.needsSetup()
+                ? page.confirmDialog.openWith("Set up everything", "all",
+                      function() { bridge.run("apply", "all") })
+                : page.confirmDialog.openWith("Set up gaming", "gaming",
+                      function() { bridge.run("apply", "gaming") })
         }
         StatusCard {
             title: "GPU Drivers"
@@ -88,6 +105,29 @@ Flickable {
             title: "AUR Extras"
             subtitle: page.statusDetail("aur")
             state_: page.statusState("aur")
+        }
+        StatusCard {
+            title: "System Updates"
+            subtitle: page.statusDetail("sysupdate")
+            state_: page.statusState("sysupdate")
+            actionText: page.statusState("sysupdate") === "warn" ? "Update system" : ""
+            busy: bridge.running
+            onAction: page.confirmDialog.openWith("Full system upgrade", "sysupdate",
+                          function() { bridge.run("apply", "sysupdate") })
+        }
+        StatusCard {
+            title: "Diagnosis"
+            subtitle: {
+                var c = page.diagCounts()
+                return c.total === 0 ? "Running functional tests…"
+                     : c.ok + " pass · " + c.warn + " warn · " + c.fail
+                       + " fail — details on the Diagnose page"
+            }
+            state_: {
+                var c = page.diagCounts()
+                return c.total === 0 ? "unknown"
+                     : c.fail > 0 ? "fail" : c.warn > 0 ? "warn" : "ok"
+            }
         }
         StatusCard {
             title: "Network"

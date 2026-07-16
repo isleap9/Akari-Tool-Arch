@@ -10,6 +10,8 @@ routes its output by mode:
   apply    -> logText (live log view)
 No UI code lives here.
 """
+import getpass
+import shutil
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QProcess, Property, Signal, Slot
@@ -25,6 +27,7 @@ class Bridge(QObject):
     logChanged = Signal()
     packagesChanged = Signal()
     kernelsChanged = Signal()
+    diagnosticsChanged = Signal()
     planChanged = Signal()
     changeLogChanged = Signal()
 
@@ -33,6 +36,7 @@ class Bridge(QObject):
         self._status: dict = {}     # key -> {"state": ..., "detail": ...}
         self._packages: list = []   # [{"group","name","installed"}]
         self._kernels: list = []    # [{"name","source","description","installed","running"}]
+        self._diagnostics: list = []  # [{"key","state","title","detail","fix"}]
         self._running = False
         self._applying = False
         self._log = ""
@@ -41,6 +45,7 @@ class Bridge(QObject):
         self._proc: QProcess | None = None
         self._mode = "check"
         self._queue: list = []
+        self._linebuf = ""
 
     # ---- properties exposed to QML -------------------------------------
     @Property("QVariantMap", notify=statusChanged)
@@ -76,6 +81,10 @@ class Bridge(QObject):
     def kernels(self):
         return self._kernels
 
+    @Property("QVariantList", notify=diagnosticsChanged)
+    def diagnostics(self):
+        return self._diagnostics
+
     # ---- slots callable from QML ----------------------------------------
     @Slot(str, str)
     def run(self, command: str, target: str):
@@ -93,6 +102,10 @@ class Bridge(QObject):
     def applyKernel(self, name: str):
         self._enqueue(["apply", "kernel", name])
 
+    @Slot(str)
+    def removeKernel(self, name: str):
+        self._enqueue(["apply", "remove-kernel", name])
+
     @Slot("QVariantList")
     def installSelected(self, names: list):
         if names:
@@ -105,6 +118,10 @@ class Bridge(QObject):
     @Slot()
     def refreshKernels(self):
         self._enqueue(["kernels"])
+
+    @Slot()
+    def runDiagnose(self):
+        self._enqueue(["diagnose"])
 
     @Slot()
     def refreshChangeLog(self):
@@ -126,20 +143,44 @@ class Bridge(QObject):
     def _start(self, args: list):
         self._mode = args[0]
         self._proc = QProcess(self)
-        self._proc.setProgram("bash")
-        self._proc.setArguments([str(BACKEND_SCRIPT), *args])
+        if args[0] == "apply" and shutil.which("pkexec"):
+            # One polkit prompt for the whole apply; the script runs as
+            # root with the real user's identity passed through.
+            self._proc.setProgram("pkexec")
+            self._proc.setArguments([
+                "env",
+                f"AKARI_USER={getpass.getuser()}",
+                f"AKARI_HOME={Path.home()}",
+                "bash", str(BACKEND_SCRIPT), *args,
+            ])
+        else:
+            self._proc.setProgram("bash")
+            self._proc.setArguments([str(BACKEND_SCRIPT), *args])
         self._proc.setProcessChannelMode(QProcess.MergedChannels)
         self._proc.readyReadStandardOutput.connect(self._on_output)
         self._proc.finished.connect(self._on_finished)
+        self._linebuf = ""
         if args[0] == "packages":
             self._packages = []
         elif args[0] == "kernels":
             self._kernels = []
+        elif args[0] == "diagnose":
+            self._diagnostics = []
         self._set_running(True, applying=(args[0] == "apply"))
         self._proc.start()
 
     def _on_output(self):
-        text = bytes(self._proc.readAllStandardOutput()).decode(errors="replace")
+        raw = self._linebuf + bytes(
+            self._proc.readAllStandardOutput()).decode(errors="replace")
+        # keep any incomplete trailing line for the next chunk
+        lines = raw.split("\n")
+        self._linebuf = lines.pop()
+        text = "\n".join(lines) + ("\n" if lines else "")
+        self._parse_text(text)
+
+    def _parse_text(self, text: str):
+        if not text:
+            return
         if self._mode == "check":
             for line in text.splitlines():
                 parts = line.split("|", 2)
@@ -166,6 +207,15 @@ class Bridge(QObject):
                          "installed": installed == "1",
                          "running": running == "1"})
             self.kernelsChanged.emit()
+        elif self._mode == "diagnose":
+            for line in text.splitlines():
+                parts = line.split("|")
+                if len(parts) == 6 and parts[0] == "DIA":
+                    _, key, state, title, detail, fix = parts
+                    self._diagnostics.append(
+                        {"key": key, "state": state, "title": title,
+                         "detail": detail, "fix": fix})
+            self.diagnosticsChanged.emit()
         elif self._mode == "plan":
             self._plan += text
             self.planChanged.emit()
@@ -177,6 +227,11 @@ class Bridge(QObject):
             self.logChanged.emit()
 
     def _on_finished(self, *_):
+        if self._linebuf:
+            self._linebuf += "\n"
+            tail, self._linebuf = self._linebuf, ""
+            # reuse the parser by injecting the tail as a final chunk
+            self._parse_text(tail)
         was_apply = self._mode == "apply"
         self._set_running(False, applying=False)
         if was_apply:

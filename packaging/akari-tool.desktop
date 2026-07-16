@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Akari Tool
+GenericName=Gaming Setup
+Comment=Gaming setup for vanilla Arch — dependencies, drivers & tweaks
+Exec=akari-tool
+Icon=akari-tool
+Terminal=false
+Categories=System;Settings;
+Keywords=gaming;steam;proton;vulkan;arch;

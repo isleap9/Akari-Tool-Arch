@@ -100,22 +100,16 @@ ColumnLayout {
                 }
             }
 
-            // Right: state label or install button, always right-aligned
+            // Right: action zone, always right-aligned
             Item {
                 id: rightSide
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.right: parent.right
                 anchors.rightMargin: 16
-                width: 110
+                width: 120
                 height: parent.height
 
-                Label {
-                    visible: modelData.installed && !modelData.running
-                    anchors.centerIn: parent
-                    text: "installed"
-                    font.pixelSize: 11
-                    color: Theme.ok
-                }
+                // Not installed -> Install
                 Button {
                     visible: !modelData.installed
                     anchors.verticalCenter: parent.verticalCenter
@@ -129,6 +123,33 @@ ColumnLayout {
                         "Install " + modelData.name,
                         "kernel " + modelData.name,
                         function() { bridge.applyKernel(modelData.name) })
+                }
+
+                // Installed, not running, not stock -> Uninstall
+                Button {
+                    visible: modelData.installed && !modelData.running
+                             && modelData.name !== "linux"
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.right: parent.right
+                    text: "Uninstall"
+                    flat: true
+                    implicitHeight: 36
+                    Material.foreground: Theme.fail
+                    enabled: !bridge.running
+                    onClicked: page.confirmDialog.openWith(
+                        "Remove " + modelData.name,
+                        "remove-kernel " + modelData.name,
+                        function() { bridge.removeKernel(modelData.name) })
+                }
+
+                // Installed stock kernel, not running -> label only
+                Label {
+                    visible: modelData.installed && !modelData.running
+                             && modelData.name === "linux"
+                    anchors.centerIn: parent
+                    text: "installed"
+                    font.pixelSize: 11
+                    color: Theme.ok
                 }
             }
         }
