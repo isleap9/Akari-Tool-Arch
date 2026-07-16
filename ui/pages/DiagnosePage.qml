@@ -72,6 +72,7 @@ ColumnLayout {
                     }
                     Label {
                         text: modelData.state === "ok"   ? "PASS"
+                            : modelData.state === "info" ? "INFO"
                             : modelData.state === "warn" ? "WARN" : "FAIL"
                         font.pixelSize: 10
                         font.letterSpacing: 1
@@ -88,8 +89,8 @@ ColumnLayout {
                 }
                 Label {
                     visible: modelData.fix.length > 0
-                    text: "Fix: " + modelData.fix
-                    color: Theme.warn
+                    text: (modelData.state === "info" ? "Tip: " : "Fix: ") + modelData.fix
+                    color: modelData.state === "info" ? Theme.info : Theme.warn
                     font.pixelSize: 12
                     wrapMode: Text.Wrap
                     Layout.fillWidth: true

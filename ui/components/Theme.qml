@@ -21,12 +21,14 @@ QtObject {
 
     // Status
     readonly property color ok:      "#43A047"
+    readonly property color info:    "#4A9EDD"
     readonly property color warn:    "#FFB300"
     readonly property color fail:    "#E53935"
     readonly property color unknown: "#555555"
 
     function stateColor(state) {
         return state === "ok"   ? ok
+             : state === "info" ? info
              : state === "warn" ? warn
              : state === "fail" ? fail : unknown
     }

@@ -1,61 +1,69 @@
-# Akari Tool Linux — v0.1
+<p align="center"><img src="ui/resources/AkariMark.png" width="96"></p>
+<h1 align="center">Akari Tool Linux</h1>
+<p align="center">Gaming setup for vanilla Arch — dependencies, drivers, kernels & diagnosis.<br>
+The Linux counterpart to Akari Tool for Windows.</p>
 
-Gaming setup tool for vanilla Arch Linux.
+## Why
 
-## Structure
+Setting up gaming on a fresh Arch install means multilib, thirty-odd packages,
+GPU drivers, lib32 drivers, tweaks, and a handful of traps (UKI boot chains,
+dkms, NTFS Steam libraries). Existing script collections are fragile.
+Akari Tool does it reliably: **show the plan before, stream the log during,
+record every change after.**
 
-```
-akari-tool-linux/
-├── backend/
-│   └── akari-setup.sh        # ALL system logic (check / plan / apply) — works standalone
-├── akari/                    # Python host package (glue only, no logic)
-│   ├── app.py                #   Qt app + QML engine bootstrap
-│   ├── bridge.py             #   QProcess bridge to the bash backend
-│   └── __main__.py           #   `python -m akari`
-├── ui/
-│   ├── Main.qml              # window shell: sidebar, header, page routing
-│   ├── components/           # reusable widgets (QML module)
-│   │   ├── qmldir            #   module definition
-│   │   ├── Theme.qml         #   singleton: all colors & metrics live here
-│   │   ├── NavItem.qml
-│   │   ├── StatusCard.qml
-│   │   └── SectionLabel.qml
-│   └── pages/
-│       ├── OverviewPage.qml  # status card grid
-│       └── LogPage.qml       # live backend output
-└── main.py                   # entry point (same as `python -m akari`)
-```
+## Features
 
-## Run
+- **One-click gaming setup** — Steam, Lutris, Wine, MangoHud, gamescope, umu,
+  fonts, and the full lib32 dependency set (baseline derived from CachyOS's
+  gaming meta-packages, translated to vanilla Arch)
+- **GPU driver detection** — AMD / Intel / NVIDIA, with variant-aware NVIDIA
+  handling (open vs dkms, headers per kernel)
+- **Kernel manager** — install/remove zen, LTS, or CachyOS kernels safely:
+  never touches the running kernel, understands UKI boot chains (preset
+  conversion, sbctl signing, dynamic GRUB menus)
+- **Diagnose** — functional tests, not package lists: does Vulkan respond in
+  64 *and* 32 bit, is the discrete GPU visible, are dkms modules built for
+  every kernel, is audio alive, controllers permissioned, Steam-on-NTFS,
+  Hyprland gaming settings
+- **Launch options builder** — compose `gamemoderun mangohud gamescope ... %command%`
+  from toggles
+- **Trust layer** — every action shows its plan first, streams live output,
+  logs every change, keeps backups, and offers one-click restore.
+  Detects snapper and tells you about your snapshots.
+
+## Install
+
+From source (Arch):
 
 ```bash
 sudo pacman -S pyside6
-python main.py        # or: python -m akari
+git clone https://github.com/isleap/Akari-Tool-Arch
+cd Akari-Tool-Arch
+python main.py
 ```
 
-Backend standalone:
+The backend works standalone with no GUI:
 
 ```bash
+./backend/akari-setup.sh --help
 ./backend/akari-setup.sh check
-./backend/akari-setup.sh plan gaming
-./backend/akari-setup.sh apply gaming|multilib|tweaks
+./backend/akari-setup.sh plan gaming     # dry-run
 ```
 
-## Conventions
+## Architecture
 
-- **All system logic goes in the bash backend.** Python never runs pacman.
-- **All colors/metrics go in `Theme.qml`.** No hex codes in pages/components.
-- **New page** = new file in `ui/pages/` + a NavItem + a StackLayout entry in Main.qml.
-- **New reusable widget** = file in `ui/components/` + a line in `qmldir`.
-- Backend `check` protocol: one `key|state|detail` line per check,
-  state ∈ ok|warn|fail. The bridge parses these into `bridge.status`.
+```
+backend/akari-setup.sh   bash    — ALL system logic (check / plan / apply)
+akari/                   python  — thin Qt host (QProcess bridge, no logic)
+ui/                      QML     — Material dark UI (components + pages)
+packaging/               —       — PKGBUILD, .desktop, icon
+```
 
-## TODO
+Rules: system logic only in bash; colors only in `ui/components/Theme.qml`;
+new page = file in `ui/pages/` + NavItem + StackLayout entry.
 
-- Sidebar navigation between pages (NavItems are visual-only; Overview is
-  the single wired page — add a `currentPage` state in Main.qml)
-- Gaming page: per-package checkbox list (read package sets from backend)
-- NVIDIA branching: nvidia-open (Turing+) / nvidia-dkms (custom kernels)
-- Polkit/pkexec prompt instead of relying on cached sudo
-- `--confirm` mode for CLI use (currently --noconfirm for GUI flow)
-- PKGBUILD for AUR distribution
+## Status
+
+v0.1.0 — tested on one gloriously complicated machine (Hyprland, Secure Boot,
+UKI + GRUB, snapper, hybrid AMD iGPU + RTX 5070, nvidia-open-dkms).
+Bug reports welcome — that's how v0.2 gets built.

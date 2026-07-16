@@ -879,8 +879,9 @@ cmd_diagnose() {
   # -- gamescope & umu ----------------------------------------------------
   if command -v gamescope &>/dev/null; then
     local gsv
-    gsv=$(gamescope --version 2>&1 | head -1 | sed 's/\x1b\[[0-9;]*m//g' | tr -cd '[:print:]' | head -c 40)
-    run_diag gamescope ok "Gamescope" "Installed ($gsv)" ""
+    gsv=$(gamescope --version 2>&1 | sed 's/\x1b\[[0-9;]*m//g' \
+          | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[0-9a-zA-Z.\-]*' | head -1)
+    run_diag gamescope ok "Gamescope" "Installed${gsv:+ (v$gsv)}" ""
   else
     run_diag gamescope warn "Gamescope" "Not installed" "Included in Set up gaming"
   fi
@@ -909,6 +910,49 @@ cmd_diagnose() {
       run_diag ntfs warn "NTFS drives" \
         "NTFS mounted at: $ntfs_mounts — fine for storage, do not put Steam libraries there" ""
     fi
+  fi
+
+  # -- dkms modules built for every installed kernel? ---------------------
+  # The pre-reboot catch: kernel updated but the NVIDIA module not built
+  # for it yet = next boot has no driver.
+  if is_installed nvidia-open-dkms || is_installed nvidia-dkms; then
+    local kver missing_k=""
+    for kver in /usr/lib/modules/*/; do
+      kver=$(basename "$kver")
+      [[ -f "/usr/lib/modules/$kver/pkgbase" ]] || continue   # real kernels only
+      if ! dkms status 2>/dev/null | grep -F "$kver" | grep -qi 'nvidia.*installed'; then
+        missing_k+="$kver "
+      fi
+    done
+    if [[ -z "$missing_k" ]]; then
+      run_diag dkms ok "NVIDIA dkms modules" \
+        "Built for every installed kernel" ""
+    else
+      run_diag dkms fail "NVIDIA dkms modules" \
+        "NOT built for: $missing_k— booting these kernels means no NVIDIA driver" \
+        "Reinstall the matching linux-*-headers, then: dkms autoinstall"
+    fi
+  fi
+
+  # -- audio server alive? -------------------------------------------------
+  if command -v pactl &>/dev/null; then
+    local audio
+    audio=$(pactl info 2>/dev/null | grep -E '^Server Name' | sed 's/.*: //') || true
+    if [[ -n "$audio" ]]; then
+      run_diag audio ok "Audio server" "$audio responding" ""
+    else
+      run_diag audio fail "Audio server" \
+        "No audio server responds — games will be silent" \
+        "systemctl --user restart pipewire pipewire-pulse wireplumber"
+    fi
+  fi
+
+  # -- Flatpak Steam (sandbox caveats) -------------------------------------
+  if command -v flatpak &>/dev/null && \
+     flatpak list --app 2>/dev/null | grep -qi 'com.valvesoftware.Steam'; then
+    run_diag flatpak warn "Flatpak Steam detected" \
+      "The sandbox blocks system MangoHud/gamemode and uses different paths" \
+      "Prefer the native steam package (installed by Set up gaming)"
   fi
 
   # -- Game controllers ----------------------------------------------------
@@ -946,18 +990,82 @@ cmd_diagnose() {
       run_diag hypr_tear ok "Hyprland: tearing" \
         "allow_tearing enabled — fullscreen games can bypass vsync latency" ""
     else
-      run_diag hypr_tear warn "Hyprland: tearing" \
-        "allow_tearing is off — lower-latency fullscreen gaming unavailable" \
-        "Set general:allow_tearing = true plus an immediate windowrule for games"
+      run_diag hypr_tear info "Hyprland: tearing" \
+        "allow_tearing is off (deliberate for many setups; enables lower-latency fullscreen gaming)" \
+        "Optional: general:allow_tearing = true plus an immediate windowrule for games"
     fi
     case "$vrr" in
       1|2) run_diag hypr_vrr ok "Hyprland: VRR" "vrr = $vrr (adaptive sync active)" "" ;;
-      0)   run_diag hypr_vrr warn "Hyprland: VRR" \
-             "vrr = 0 — adaptive sync disabled" \
-             "Set misc:vrr = 1 (always) or 2 (fullscreen only) if your monitor supports it" ;;
+      0)   run_diag hypr_vrr info "Hyprland: VRR" \
+             "vrr = 0 — adaptive sync disabled (fine if your monitor lacks it)" \
+             "Optional: misc:vrr = 1 (always) or 2 (fullscreen only)" ;;
       *)   : ;;  # hyprctl unavailable mid-session; skip silently
     esac
   fi
+}
+
+# ---- restore / undo ------------------------------------------------------
+# Every risky edit keeps a .akari.bak next to the original. These commands
+# list and restore them. Emits: RST|id|backup_path|original_path|timestamp
+
+akari_backups() {
+  local f
+  for f in /etc/pacman.conf.akari.bak /etc/mkinitcpio.d/*.akari.bak; do
+    [[ -e "$f" ]] && echo "$f"
+  done
+  return 0
+}
+
+cmd_restore_list() {
+  local f orig ts
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    orig=${f%.akari.bak}
+    ts=$(date -r "$f" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "unknown")
+    printf 'RST|%s|%s|%s|%s\n' "$(basename "$f")" "$f" "$orig" "$ts"
+  done < <(akari_backups)
+  if command -v snapper &>/dev/null; then
+    printf 'RST|snapper|-|-|snapper is active: every pacman operation has pre/post snapshots (snapper list / rollback)\n'
+  fi
+  return 0
+}
+
+find_backup_by_id() {
+  local id="$1" f
+  while IFS= read -r f; do
+    [[ "$(basename "$f")" == "$id" ]] && { echo "$f"; return 0; }
+  done < <(akari_backups)
+  return 1
+}
+
+plan_restore() {
+  local id="$1" f orig
+  f=$(find_backup_by_id "$id") || { echo "No such backup: $id"; return 1; }
+  orig=${f%.akari.bak}
+  echo "== Plan: restore $(basename "$orig") =="
+  echo "Will do:"
+  echo "  1. Save the CURRENT $orig as ${orig}.before-restore"
+  echo "  2. Copy the backup ($f, from $(date -r "$f" '+%Y-%m-%d %H:%M')) over $orig"
+  [[ "$orig" == /etc/pacman.conf ]] && \
+    echo "  3. Run pacman -Sy to resync repositories"
+  echo ""
+  echo "Nothing is deleted — the restore itself is undoable."
+}
+
+apply_restore() {
+  local id="$1" f orig
+  f=$(find_backup_by_id "$id") || { echo "No such backup: $id" >&2; return 1; }
+  orig=${f%.akari.bak}
+  echo ":: Saving current $orig as ${orig}.before-restore"
+  run_root cp -a "$orig" "${orig}.before-restore"
+  echo ":: Restoring $orig from backup"
+  run_root cp -a "$f" "$orig"
+  log_change "restored $orig from $f (previous state saved as ${orig}.before-restore)"
+  if [[ "$orig" == /etc/pacman.conf ]]; then
+    echo ":: Resyncing repositories"
+    run_root pacman -Sy
+  fi
+  echo ":: Restore complete."
 }
 
 cmd_log() {
@@ -971,11 +1079,33 @@ cmd_log() {
 
 # ---------------------------------------------------------------- dispatch
 
+AKARI_VERSION="0.1.0"
+
 case "${1:-}" in
+  --version|-V) echo "akari-setup $AKARI_VERSION" ;;
+  --help|-h)
+    cat <<'HELP'
+akari-setup — Akari Tool Linux backend (works standalone, no GUI needed)
+
+  check                          machine-readable system status
+  packages                       gaming package list with install state
+  kernels                        available kernels with install/running state
+  diagnose                       functional tests of the gaming stack
+  restore-list                   backups available to restore
+  log                            everything this tool changed
+  plan  <target>                 dry-run: what an apply would do
+  apply <target>                 do it (uses sudo per command)
+
+  targets: gaming, multilib, tweaks, sysupdate, all,
+           kernel <name>, remove-kernel <name>,
+           selected <pkg...>, restore <backup-id>
+HELP
+    ;;
   check)    cmd_check ;;
   packages) cmd_packages ;;
   kernels)  cmd_kernels ;;
   diagnose) cmd_diagnose ;;
+  restore-list) cmd_restore_list ;;
   log)      cmd_log ;;
   plan)   case "${2:-gaming}" in
             gaming)        plan_gaming ;;
@@ -985,6 +1115,7 @@ case "${1:-}" in
             remove-kernel) plan_remove_kernel "${3:-}" ;;
             sysupdate)     plan_sysupdate ;;
             all)           plan_all ;;
+            restore)       plan_restore "${3:-}" ;;
             *) echo "unknown plan target"; exit 1 ;;
           esac ;;
   apply)  case "${2:-}" in
@@ -995,6 +1126,7 @@ case "${1:-}" in
             remove-kernel) remove_kernel "${3:-}" ;;
             sysupdate)     apply_sysupdate ;;
             all)           apply_all ;;
+            restore)       apply_restore "${3:-}" ;;
             selected)      shift; apply_selected "$@" ;;
             *) echo "usage: $0 apply {gaming|multilib|tweaks|kernel <name>|remove-kernel <name>|selected pkg...}"; exit 1 ;;
           esac ;;

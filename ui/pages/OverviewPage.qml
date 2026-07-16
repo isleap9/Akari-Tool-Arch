@@ -32,7 +32,7 @@ Flickable {
         var ok = 0, warn = 0, fail = 0
         for (var i = 0; i < bridge.diagnostics.length; i++) {
             var st = bridge.diagnostics[i].state
-            if (st === "ok") ok++
+            if (st === "ok" || st === "info") ok++
             else if (st === "fail") fail++
             else warn++
         }

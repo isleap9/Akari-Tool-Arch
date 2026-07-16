@@ -28,6 +28,7 @@ class Bridge(QObject):
     packagesChanged = Signal()
     kernelsChanged = Signal()
     diagnosticsChanged = Signal()
+    restoreItemsChanged = Signal()
     planChanged = Signal()
     changeLogChanged = Signal()
 
@@ -37,6 +38,7 @@ class Bridge(QObject):
         self._packages: list = []   # [{"group","name","installed"}]
         self._kernels: list = []    # [{"name","source","description","installed","running"}]
         self._diagnostics: list = []  # [{"key","state","title","detail","fix"}]
+        self._restore: list = []      # [{"id","backup","original","when"}]
         self._running = False
         self._applying = False
         self._log = ""
@@ -85,6 +87,10 @@ class Bridge(QObject):
     def diagnostics(self):
         return self._diagnostics
 
+    @Property("QVariantList", notify=restoreItemsChanged)
+    def restoreItems(self):
+        return self._restore
+
     # ---- slots callable from QML ----------------------------------------
     @Slot(str, str)
     def run(self, command: str, target: str):
@@ -122,6 +128,14 @@ class Bridge(QObject):
     @Slot()
     def runDiagnose(self):
         self._enqueue(["diagnose"])
+
+    @Slot()
+    def refreshRestore(self):
+        self._enqueue(["restore-list"])
+
+    @Slot(str)
+    def applyRestore(self, backup_id: str):
+        self._enqueue(["apply", "restore", backup_id])
 
     @Slot()
     def refreshChangeLog(self):
@@ -166,6 +180,8 @@ class Bridge(QObject):
             self._kernels = []
         elif args[0] == "diagnose":
             self._diagnostics = []
+        elif args[0] == "restore-list":
+            self._restore = []
         self._set_running(True, applying=(args[0] == "apply"))
         self._proc.start()
 
@@ -216,6 +232,15 @@ class Bridge(QObject):
                         {"key": key, "state": state, "title": title,
                          "detail": detail, "fix": fix})
             self.diagnosticsChanged.emit()
+        elif self._mode == "restore-list":
+            for line in text.splitlines():
+                parts = line.split("|")
+                if len(parts) == 5 and parts[0] == "RST":
+                    _, bid, backup, original, when = parts
+                    self._restore.append(
+                        {"id": bid, "backup": backup,
+                         "original": original, "when": when})
+            self.restoreItemsChanged.emit()
         elif self._mode == "plan":
             self._plan += text
             self.planChanged.emit()
@@ -236,6 +261,7 @@ class Bridge(QObject):
         self._set_running(False, applying=False)
         if was_apply:
             # refresh every view after an apply
+            self._queue.insert(0, ["restore-list"])
             self._queue.insert(0, ["log"])
             self._queue.insert(0, ["kernels"])
             self._queue.insert(0, ["packages"])
