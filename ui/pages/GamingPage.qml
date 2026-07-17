@@ -47,6 +47,15 @@ ColumnLayout {
         return names
     }
 
+    function selectionHasAur(names) {
+        for (var i = 0; i < bridge.packages.length; i++) {
+            var p = bridge.packages[i]
+            if (p.group === "aur" && names.indexOf(p.name) !== -1)
+                return true
+        }
+        return false
+    }
+
     Component.onCompleted: bridge.refreshPackages()
     Connections {
         target: bridge
@@ -83,10 +92,20 @@ ColumnLayout {
             enabled: !bridge.running && page.selectedCount > 0
             onClicked: {
                 var names = page.selectedNames()
+                var hasAur = page.selectionHasAur(names)
                 page.confirmDialog.openWithText(
-                    "Install " + names.length + " package" + (names.length > 1 ? "s" : ""),
+                    "Install " + names.length + " package" + (names.length > 1 ? "s" : "")
+                        + (hasAur ? " (opens a terminal — AUR builds are interactive)" : ""),
                     "Will install:\n  " + names.join("\n  "),
-                    function() { bridge.installSelected(names) })
+                    function() {
+                        if (hasAur) {
+                            if (!bridge.runInTerminal(
+                                    ["apply", "selected"].concat(names)))
+                                bridge.installSelected(names)
+                        } else {
+                            bridge.installSelected(names)
+                        }
+                    })
             }
         }
     }

@@ -11,6 +11,7 @@ routes its output by mode:
 No UI code lives here.
 """
 import getpass
+import os
 import shutil
 from pathlib import Path
 
@@ -107,6 +108,32 @@ class Bridge(QObject):
     @Slot(str)
     def applyKernel(self, name: str):
         self._enqueue(["apply", "kernel", name])
+
+    # ---- interactive terminal for AUR operations ------------------------
+    # AUR builds prompt for a password mid-way; that needs a real terminal,
+    # not the GUI's pkexec session. Opens the user's terminal emulator and
+    # runs the backend there (per-command sudo, fully interactive).
+    TERMINALS = [
+        ("foot", ["-e"]), ("kitty", ["-e"]), ("alacritty", ["-e"]),
+        ("wezterm", ["start", "--"]), ("ghostty", ["-e"]),
+        ("konsole", ["-e"]), ("gnome-terminal", ["--"]), ("xterm", ["-e"]),
+    ]
+
+    @Slot("QVariantList", result=bool)
+    def runInTerminal(self, args: list) -> bool:
+        term_env = os.environ.get("TERMINAL")
+        candidates = ([(term_env, ["-e"])] if term_env else []) + self.TERMINALS
+        script = " ".join(
+            f"'{a}'" for a in ["bash", str(BACKEND_SCRIPT), *[str(a) for a in args]])
+        wrapped = (f"{script}; ec=$?; echo; "
+                   f"read -rp \"Finished (exit $ec) — press Enter to close\"")
+        for name, flag in candidates:
+            if name and shutil.which(name):
+                ok = QProcess.startDetached(
+                    name, [*flag, "bash", "-c", wrapped])
+                if ok:
+                    return True
+        return False
 
     @Slot(str)
     def removeKernel(self, name: str):
@@ -252,6 +279,16 @@ class Bridge(QObject):
             self.logChanged.emit()
 
     def _on_finished(self, *_):
+        # pkexec exit codes: 126 = dismissed, 127 = no agent/authorization
+        if (self._mode == "apply" and self._proc
+                and self._proc.program() == "pkexec"
+                and self._proc.exitCode() in (126, 127)):
+            self._log += ("\n:: Authentication did not complete (pkexec exit "
+                          f"{self._proc.exitCode()}).\n"
+                          ":: If no password dialog appeared, no polkit agent is "
+                          "running.\n:: On Hyprland: install hyprpolkitagent and add\n"
+                          "::   exec-once = systemctl --user start hyprpolkitagent\n")
+            self.logChanged.emit()
         if self._linebuf:
             self._linebuf += "\n"
             tail, self._linebuf = self._linebuf, ""

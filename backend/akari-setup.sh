@@ -32,6 +32,13 @@ run_user() {   # run a command as the real user (AUR helpers refuse root)
   fi
 }
 
+# AUR helpers need an interactive terminal (their internal sudo prompts for
+# a password). Inside the GUI's pkexec session there is no tty, so paru
+# would hang forever. Callers must check this before any AUR operation.
+gui_root_no_aur() {
+  [[ $EUID -eq 0 && -n "${AKARI_USER:-}" && ! -t 0 ]]
+}
+
 # ---------------------------------------------------------------- data layer
 # Package lists live here as data, not logic ("apps as data", CachyOS-style).
 # Baseline derived from cachyos-gaming-meta + cachyos-gaming-applications,
@@ -456,6 +463,13 @@ apply_kernel() {
       echo "   Install paru or yay first, or use the CachyOS repos." >&2
       return 1
     fi
+    if gui_root_no_aur; then
+      echo ":: $name is an AUR package — it needs an interactive terminal" >&2
+      echo "   (the build prompts for your password mid-way; the GUI's" >&2
+      echo "   privileged session has no terminal, so it would hang)." >&2
+      echo "   The GUI opens AUR kernels in a terminal window instead." >&2
+      return 1
+    fi
     snapper_note
     echo ":: Installing $name + ${name}-headers via $helper (this compiles — can take a long time)"
     run_user "$helper" -S --needed --noconfirm "$name" "${name}-headers"
@@ -497,7 +511,10 @@ apply_selected() {
     local helper=""
     command -v paru &>/dev/null && helper=paru
     [[ -z "$helper" ]] && command -v yay &>/dev/null && helper=yay
-    if [[ -n "$helper" ]]; then
+    if gui_root_no_aur; then
+      echo ":: Skipping AUR packages (need an interactive terminal): ${aurp[*]}"
+      echo "   Re-run the selection — AUR items open in a terminal window."
+    elif [[ -n "$helper" ]]; then
       echo ":: Installing ${#aurp[@]} AUR packages via $helper"
       run_user "$helper" -S --needed --noconfirm "${aurp[@]}" || \
         echo ":: (AUR install failed — continuing)"
@@ -577,7 +594,14 @@ apply_gaming() {
   local helper=""
   command -v paru &>/dev/null && helper=paru
   [[ -z "$helper" ]] && command -v yay &>/dev/null && helper=yay
-  if [[ -n "$helper" ]]; then
+  if [[ -n "$helper" ]] && gui_root_no_aur; then
+    missing=$(missing_from "${PKGS_AUR_OPTIONAL[@]}")
+    [[ -n "$missing" ]] && {
+      echo ":: Skipping optional AUR extras (need an interactive terminal):"
+      echo "   $(echo $missing | tr '\n' ' ')"
+      echo "   Install them from the Gaming page — AUR items open in a terminal."
+    }
+  elif [[ -n "$helper" ]]; then
     missing=$(missing_from "${PKGS_AUR_OPTIONAL[@]}")
     if [[ -n "$missing" ]]; then
       echo ":: Installing optional AUR packages via $helper"

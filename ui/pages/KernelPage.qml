@@ -119,10 +119,21 @@ ColumnLayout {
                     implicitHeight: 36
                     Material.elevation: 0
                     enabled: !bridge.running
-                    onClicked: page.confirmDialog.openWith(
-                        "Install " + modelData.name,
-                        "kernel " + modelData.name,
-                        function() { bridge.applyKernel(modelData.name) })
+                    onClicked: {
+                        var name = modelData.name
+                        var isAur = modelData.source === "aur"
+                        page.confirmDialog.openWith(
+                            (isAur ? "Install (in terminal) " : "Install ") + name,
+                            "kernel " + name,
+                            function() {
+                                if (isAur) {
+                                    if (!bridge.runInTerminal(["apply", "kernel", name]))
+                                        bridge.applyKernel(name)  // surfaces the clear error
+                                } else {
+                                    bridge.applyKernel(name)
+                                }
+                            })
+                    }
                 }
 
                 // Installed, not running, not stock -> Uninstall
