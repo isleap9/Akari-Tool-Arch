@@ -19,7 +19,11 @@ ColumnLayout {
         deps:  "Dependencies — 32-bit libs & codecs",
         fonts: "Fonts",
         gpu:   "GPU drivers (detected)",
-        aur:   "Optional extras (AUR)"
+        apps:  "Extra apps — streaming, chat & controllers",
+        audio: "Audio — PipeWire incl. 32-bit",
+        input: "Controllers — udev rules",
+        aur:   "Optional extras (AUR)",
+        flatpak: "Flatpak apps (Flathub) — no AUR needed"
     })
 
     function rebuildSelection() {
@@ -94,17 +98,10 @@ ColumnLayout {
                 var names = page.selectedNames()
                 var hasAur = page.selectionHasAur(names)
                 page.confirmDialog.openWithText(
-                    "Install " + names.length + " package" + (names.length > 1 ? "s" : "")
-                        + (hasAur ? " (opens a terminal — AUR builds are interactive)" : ""),
+                    "Install " + names.length + " package" + (names.length > 1 ? "s" : ""),
                     "Will install:\n  " + names.join("\n  "),
                     function() {
-                        if (hasAur) {
-                            if (!bridge.runInTerminal(
-                                    ["apply", "selected"].concat(names)))
-                                bridge.installSelected(names)
-                        } else {
-                            bridge.installSelected(names)
-                        }
+                        bridge.installSelected(names)
                     })
             }
         }
@@ -169,6 +166,19 @@ ColumnLayout {
                     text: modelData.installed ? "installed" : "missing"
                     font.pixelSize: 11
                     color: modelData.installed ? Theme.ok : Theme.warn
+                }
+                Button {
+                    visible: modelData.installed && modelData.group !== "gpu"
+                    text: "Remove"
+                    flat: true
+                    implicitHeight: 30
+                    font.pixelSize: 11
+                    Material.foreground: Theme.warn
+                    enabled: !bridge.running
+                    onClicked: page.confirmDialog.openWith(
+                        "Uninstall " + modelData.name,
+                        "remove " + modelData.name,
+                        function() { bridge.removeSelected([modelData.name]) })
                 }
             }
             HoverHandler { id: hoverArea }

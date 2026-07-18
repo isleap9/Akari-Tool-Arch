@@ -27,6 +27,7 @@ class Bridge(QObject):
     applyingChanged = Signal()
     logChanged = Signal()
     packagesChanged = Signal()
+    appsChanged = Signal()
     kernelsChanged = Signal()
     diagnosticsChanged = Signal()
     restoreItemsChanged = Signal()
@@ -37,6 +38,7 @@ class Bridge(QObject):
         super().__init__(parent)
         self._status: dict = {}     # key -> {"state": ..., "detail": ...}
         self._packages: list = []   # [{"group","name","installed"}]
+        self._apps: list = []       # [{"source","name","version","size","protected","description"}]
         self._kernels: list = []    # [{"name","source","description","installed","running"}]
         self._diagnostics: list = []  # [{"key","state","title","detail","fix"}]
         self._restore: list = []      # [{"id","backup","original","when"}]
@@ -79,6 +81,10 @@ class Bridge(QObject):
     @Property("QVariantList", notify=packagesChanged)
     def packages(self):
         return self._packages
+
+    @Property("QVariantList", notify=appsChanged)
+    def apps(self):
+        return self._apps
 
     @Property("QVariantList", notify=kernelsChanged)
     def kernels(self):
@@ -144,9 +150,18 @@ class Bridge(QObject):
         if names:
             self._enqueue(["apply", "selected", *[str(n) for n in names]])
 
+    @Slot("QVariantList")
+    def removeSelected(self, names: list):
+        if names:
+            self._enqueue(["apply", "remove", *[str(n) for n in names]])
+
     @Slot()
     def refreshPackages(self):
         self._enqueue(["packages"])
+
+    @Slot()
+    def refreshApps(self):
+        self._enqueue(["apps"])
 
     @Slot()
     def refreshKernels(self):
@@ -203,6 +218,8 @@ class Bridge(QObject):
         self._linebuf = ""
         if args[0] == "packages":
             self._packages = []
+        elif args[0] == "apps":
+            self._apps = []
         elif args[0] == "kernels":
             self._kernels = []
         elif args[0] == "diagnose":
@@ -240,6 +257,16 @@ class Bridge(QObject):
                         {"group": group, "name": name,
                          "installed": installed == "1"})
             self.packagesChanged.emit()
+        elif self._mode == "apps":
+            for line in text.splitlines():
+                parts = line.split("|")
+                if len(parts) == 7 and parts[0] == "APP":
+                    _, source, name, ver, size, protected, desc = parts
+                    self._apps.append(
+                        {"source": source, "name": name, "version": ver,
+                         "size": size, "protected": protected == "1",
+                         "description": desc})
+            self.appsChanged.emit()
         elif self._mode == "kernels":
             for line in text.splitlines():
                 parts = line.split("|")
@@ -301,6 +328,7 @@ class Bridge(QObject):
             self._queue.insert(0, ["restore-list"])
             self._queue.insert(0, ["log"])
             self._queue.insert(0, ["kernels"])
+            self._queue.insert(0, ["apps"])
             self._queue.insert(0, ["packages"])
             self._queue.insert(0, ["check"])
         if self._queue:

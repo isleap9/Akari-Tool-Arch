@@ -39,6 +39,28 @@ gui_root_no_aur() {
   [[ $EUID -eq 0 && -n "${AKARI_USER:-}" && ! -t 0 ]]
 }
 
+# Run an AUR helper as the real user even without a tty.
+# We are already root (pkexec), so we grant the user a TEMPORARY sudoers
+# rule limited to pacman, run the helper, then remove the rule again.
+# This is the same technique used by several distro installers.
+run_aur() {   # run_aur <helper> <args...>
+  local helper="$1"; shift
+  if [[ $EUID -eq 0 && -n "${AKARI_USER:-}" ]]; then
+    local drop=/etc/sudoers.d/99-akari-aur-tmp
+    printf '%s ALL=(root) NOPASSWD: /usr/bin/pacman\n' "$AKARI_USER" > "$drop"
+    chmod 0440 "$drop"
+    # shellcheck disable=SC2064
+    trap "rm -f '$drop'" RETURN
+    local rc=0
+    runuser -u "$AKARI_USER" -- "$helper" "$@" || rc=$?
+    rm -f "$drop"
+    trap - RETURN
+    return $rc
+  else
+    "$helper" "$@"
+  fi
+}
+
 # ---------------------------------------------------------------- data layer
 # Package lists live here as data, not logic ("apps as data", CachyOS-style).
 # Baseline derived from cachyos-gaming-meta + cachyos-gaming-applications,
@@ -59,6 +81,28 @@ PKGS_DEPS=(
 PKGS_FONTS=( ttf-liberation wqy-zenhei )
 
 PKGS_AUR_OPTIONAL=( heroic-games-launcher-bin protonup-qt goverlay )
+
+# Extra apps (opt-in via the Gaming page, group "apps"/"apps_aur")
+PKGS_APPS_REPO=( obs-studio discord antimicrox )
+PKGS_APPS_AUR=( steamtinkerlaunch vesktop-bin )
+
+# Audio: missing lib32 pipewire pieces are the classic "no sound in Proton
+# games" cause. Installed by Set up gaming, checked by Diagnose.
+PKGS_AUDIO=(
+  pipewire pipewire-pulse pipewire-alsa pipewire-jack
+  lib32-pipewire lib32-pipewire-jack wireplumber
+)
+
+# Controllers: udev rules for gamepads/wheels + user in input group.
+PKGS_CONTROLLER=( game-devices-udev )
+
+# Flatpak alternatives — same apps without needing an AUR helper.
+# Format: appid|display name
+FLATPAK_APPS=(
+  "com.heroicgameslauncher.hgl|Heroic Games Launcher"
+  "net.davidotek.pupgui2|ProtonUp-Qt"
+  "com.usebottles.bottles|Bottles"
+)
 
 # Kernels offered by the Kernel page. source: repo (pacman) or aur.
 # Format: name|source|description
@@ -274,6 +318,53 @@ check_staleness() {
   fi
 }
 
+check_flatpak() {
+  if flatpak_ready; then
+    local n
+    n=$(flatpak list --app 2>/dev/null | wc -l)
+    emit flatpak ok "Flatpak + Flathub ready ($n app(s) installed)"
+  elif command -v flatpak &>/dev/null; then
+    emit flatpak warn "Flatpak installed but Flathub remote missing"
+  else
+    emit flatpak warn "Flatpak not set up — AUR-free app installs unavailable"
+  fi
+}
+
+check_snapshots() {
+  case "$(snapshot_tool)" in
+    snapper)
+      if is_installed snap-pac; then
+        emit snapshots ok "snapper + snap-pac — every install is snapshotted"
+      else
+        emit snapshots ok "snapper found — Akari snapshots before each change"
+      fi ;;
+    timeshift) emit snapshots ok "timeshift found — Akari snapshots before each change" ;;
+    none)      emit snapshots warn "No snapshot tool — changes cannot be rolled back at the filesystem level" ;;
+  esac
+}
+
+check_mirrors() {
+  local ml=/etc/pacman.d/mirrorlist age_days
+  [[ -f $ml ]] || { emit mirrors warn "No mirrorlist found"; return; }
+  age_days=$(( ( $(date +%s) - $(stat -c %Y "$ml") ) / 86400 ))
+  if (( age_days <= 30 )); then
+    emit mirrors ok "Mirrorlist updated $age_days day(s) ago"
+  else
+    emit mirrors warn "Mirrorlist is $age_days days old — optimize for faster downloads"
+  fi
+}
+
+check_cache() {
+  local mib orph
+  mib=$(du -sm /var/cache/pacman/pkg 2>/dev/null | cut -f1); mib=${mib:-0}
+  orph=$(pacman -Qtdq 2>/dev/null | wc -l)
+  if (( mib > 5120 || orph > 0 )); then
+    emit cache warn "Package cache: ${mib} MiB, orphans: $orph — cleanup recommended"
+  else
+    emit cache ok "Package cache: ${mib} MiB, no orphans"
+  fi
+}
+
 cmd_check() {
   check_arch
   check_root
@@ -285,6 +376,10 @@ cmd_check() {
   check_aur_helper
   check_tweaks
   check_staleness
+  check_mirrors
+  check_cache
+  check_snapshots
+  check_flatpak
 }
 
 # Emit every known package with group + install state: PKG|group|name|1/0
@@ -304,9 +399,69 @@ cmd_packages() {
               for p in "${npkgs[@]}";           do emit_pkg gpu "$p"; done ;;
     esac
   done
+  for p in "${PKGS_APPS_REPO[@]}";  do emit_pkg apps  "$p"; done
+  for p in "${PKGS_AUDIO[@]}";      do emit_pkg audio "$p"; done
+  for p in "${PKGS_CONTROLLER[@]}"; do emit_pkg input "$p"; done
   if command -v paru &>/dev/null || command -v yay &>/dev/null; then
     for p in "${PKGS_AUR_OPTIONAL[@]}"; do emit_pkg aur "$p"; done
+    for p in "${PKGS_APPS_AUR[@]}";    do emit_pkg aur "$p"; done
   fi
+  if flatpak_ready; then
+    local entry appid
+    for entry in "${FLATPAK_APPS[@]}"; do
+      appid="${entry%%|*}"
+      printf 'PKG|%s|%s|%d\n' flatpak "$appid" \
+        "$(flatpak_installed "$appid" && echo 1 || echo 0)"
+    done
+  fi
+}
+
+# ---- flatpak track -----------------------------------------------------
+flatpak_ready() {
+  command -v flatpak &>/dev/null && \
+    flatpak remotes 2>/dev/null | grep -qiw flathub
+}
+
+flatpak_installed() {   # flatpak_installed <appid>
+  flatpak list --app --columns=application 2>/dev/null | grep -qxF "$1"
+}
+
+plan_flatpak_setup() {
+  echo "== Plan: set up Flatpak =="
+  if flatpak_ready; then
+    echo "Flatpak + Flathub already set up — nothing to do."
+  else
+    echo "Will do:"
+    is_installed flatpak || echo "  - pacman -S flatpak"
+    echo "  - add the Flathub remote (flathub.org)"
+    echo "Afterwards Heroic, ProtonUp-Qt and Bottles can be installed as Flatpaks"
+    echo "— no AUR helper needed. (A relogin may be needed for menu entries.)"
+  fi
+}
+
+apply_flatpak_setup() {
+  if flatpak_ready; then echo ":: Flatpak + Flathub already set up."; return 0; fi
+  is_installed flatpak || {
+    echo ":: Installing flatpak"
+    run_root pacman -S --needed --noconfirm flatpak
+  }
+  echo ":: Adding Flathub remote"
+  run_root flatpak remote-add --if-not-exists flathub \
+    https://dl.flathub.org/repo/flathub.flatpakrepo
+  log_change "set up flatpak with Flathub remote"
+  echo ":: Flatpak ready. Flatpak apps now appear on the Gaming page."
+  echo "   (Log out and back in once so app menu entries show up.)"
+}
+
+apply_flatpak() {   # apply_flatpak <appid...>
+  [[ $# -eq 0 ]] && { echo "No Flatpak apps given."; return 0; }
+  flatpak_ready || apply_flatpak_setup
+  echo ":: Installing ${#} Flatpak app(s) from Flathub"
+  # system-wide install; runs fine as root (GUI) or via sudo-less user +
+  # polkit (CLI). --noninteractive answers all prompts.
+  run_root flatpak install -y --noninteractive flathub "$@"
+  log_change "installed flatpak apps: $*"
+  echo ":: Flatpak install complete."
 }
 
 emit_pkg() {
@@ -375,10 +530,49 @@ setup_uki_preset() {
   fi
 }
 
-snapper_note() {
-  if command -v snapper &>/dev/null; then
-    echo ":: snapper detected — pre/post snapshots are taken automatically."
+# ---- snapshots --------------------------------------------------------
+# Take a real pre-change snapshot when a supported tool is available:
+#   snapper   — skipped if snap-pac is installed (it already snapshots
+#               every pacman transaction; doubling up is just noise)
+#   timeshift — used when snapper is absent
+# Never fatal: a failed snapshot prints a warning and the apply continues.
+snapshot_tool() {
+  if command -v snapper &>/dev/null && snapper list-configs 2>/dev/null | grep -qw root; then
+    echo snapper
+  elif command -v timeshift &>/dev/null; then
+    echo timeshift
+  else
+    echo none
   fi
+}
+
+snapper_note() {   # snapper_note [description]
+  local desc="${1:-akari change}"
+  case "$(snapshot_tool)" in
+    snapper)
+      if is_installed snap-pac; then
+        echo ":: snap-pac detected — pacman transactions are snapshotted automatically."
+      else
+        local num
+        num=$(run_root snapper -c root create -t single -c number \
+                --description "akari: $desc" --print-number 2>/dev/null) || true
+        if [[ -n "$num" ]]; then
+          echo ":: snapper snapshot #$num created (akari: $desc)"
+          log_change "created snapper snapshot #$num before: $desc"
+        else
+          echo ":: (snapper snapshot failed — continuing without one)"
+        fi
+      fi ;;
+    timeshift)
+      echo ":: Creating timeshift snapshot (akari: $desc) — this can take a moment"
+      if run_root timeshift --create --comments "akari: $desc" --scripted >/dev/null 2>&1; then
+        echo ":: timeshift snapshot created"
+        log_change "created timeshift snapshot before: $desc"
+      else
+        echo ":: (timeshift snapshot failed — continuing without one)"
+      fi ;;
+    none) : ;;   # nothing installed — silent, as before
+  esac
   return 0
 }
 
@@ -450,7 +644,7 @@ apply_kernel() {
   if is_installed "$name"; then
     echo ":: $name is already installed."
   elif [[ $source == repo ]]; then
-    snapper_note
+    snapper_note "install kernel $name"
     echo ":: Installing $name + ${name}-headers via pacman"
     run_root pacman -S --needed --noconfirm "$name" "${name}-headers"
     log_change "installed kernel: $name"
@@ -463,16 +657,9 @@ apply_kernel() {
       echo "   Install paru or yay first, or use the CachyOS repos." >&2
       return 1
     fi
-    if gui_root_no_aur; then
-      echo ":: $name is an AUR package — it needs an interactive terminal" >&2
-      echo "   (the build prompts for your password mid-way; the GUI's" >&2
-      echo "   privileged session has no terminal, so it would hang)." >&2
-      echo "   The GUI opens AUR kernels in a terminal window instead." >&2
-      return 1
-    fi
-    snapper_note
+    snapper_note "install kernel $name (AUR)"
     echo ":: Installing $name + ${name}-headers via $helper (this compiles — can take a long time)"
-    run_user "$helper" -S --needed --noconfirm "$name" "${name}-headers"
+    run_aur "$helper" -S --needed --noconfirm "$name" "${name}-headers"
     log_change "installed kernel via AUR: $name"
   fi
 
@@ -496,13 +683,18 @@ apply_selected() {
 
   grep -Eq '^\s*\[multilib\]' /etc/pacman.conf 2>/dev/null || apply_multilib
 
-  local repo=() aurp=() p known_aur=" ${PKGS_AUR_OPTIONAL[*]} "
+  local repo=() aurp=() flat=() p entry
+  local known_aur=" ${PKGS_AUR_OPTIONAL[*]} ${PKGS_APPS_AUR[*]} "
+  local known_flat=" "
+  for entry in "${FLATPAK_APPS[@]}"; do known_flat+="${entry%%|*} "; done
   for p in "$@"; do
-    if [[ $known_aur == *" $p "* ]]; then aurp+=("$p"); else repo+=("$p"); fi
+    if   [[ $known_flat == *" $p "* ]]; then flat+=("$p")
+    elif [[ $known_aur  == *" $p "* ]]; then aurp+=("$p")
+    else repo+=("$p"); fi
   done
 
   if ((${#repo[@]})); then
-    snapper_note
+    snapper_note "install selected packages"
     echo ":: Installing ${#repo[@]} packages via pacman"
     run_root pacman -S --needed --noconfirm "${repo[@]}"
     log_change "installed selected packages: ${repo[*]}"
@@ -511,17 +703,19 @@ apply_selected() {
     local helper=""
     command -v paru &>/dev/null && helper=paru
     [[ -z "$helper" ]] && command -v yay &>/dev/null && helper=yay
-    if gui_root_no_aur; then
-      echo ":: Skipping AUR packages (need an interactive terminal): ${aurp[*]}"
-      echo "   Re-run the selection — AUR items open in a terminal window."
-    elif [[ -n "$helper" ]]; then
+    if [[ -n "$helper" ]]; then
       echo ":: Installing ${#aurp[@]} AUR packages via $helper"
-      run_user "$helper" -S --needed --noconfirm "${aurp[@]}" || \
+      if run_aur "$helper" -S --needed --noconfirm "${aurp[@]}"; then
+        log_change "installed selected AUR packages: ${aurp[*]}"
+      else
         echo ":: (AUR install failed — continuing)"
-      log_change "installed selected AUR packages: ${aurp[*]}"
+      fi
     else
       echo ":: No AUR helper — skipped: ${aurp[*]}"
     fi
+  fi
+  if ((${#flat[@]})); then
+    apply_flatpak "${flat[@]}"
   fi
   echo ":: Selected install complete."
 }
@@ -568,7 +762,8 @@ apply_gaming() {
   # multilib is a hard prerequisite
   grep -Eq '^\s*\[multilib\]' /etc/pacman.conf 2>/dev/null || apply_multilib
 
-  local vendors v pkgs=( "${PKGS_CORE[@]}" "${PKGS_DEPS[@]}" "${PKGS_FONTS[@]}" )
+  local vendors v pkgs=( "${PKGS_CORE[@]}" "${PKGS_DEPS[@]}" "${PKGS_FONTS[@]}"
+                         "${PKGS_AUDIO[@]}" "${PKGS_CONTROLLER[@]}" )
   vendors=$(detect_gpu)
   for v in $vendors; do
     case $v in
@@ -583,32 +778,27 @@ apply_gaming() {
   if [[ -z "$missing" ]]; then
     echo ":: All gaming packages already installed."
   else
-    snapper_note
+    snapper_note "gaming setup"
     echo ":: Installing $(wc -l <<<"$missing") packages via pacman"
     # shellcheck disable=SC2086
     run_root pacman -S --needed --noconfirm $missing
     log_change "installed gaming packages: $(echo $missing | tr '\n' ' ')"
   fi
 
-  # Optional AUR extras — never a hard dependency
+  # Optional AUR extras — now installed in BOTH CLI and GUI modes
   local helper=""
   command -v paru &>/dev/null && helper=paru
   [[ -z "$helper" ]] && command -v yay &>/dev/null && helper=yay
-  if [[ -n "$helper" ]] && gui_root_no_aur; then
-    missing=$(missing_from "${PKGS_AUR_OPTIONAL[@]}")
-    [[ -n "$missing" ]] && {
-      echo ":: Skipping optional AUR extras (need an interactive terminal):"
-      echo "   $(echo $missing | tr '\n' ' ')"
-      echo "   Install them from the Gaming page — AUR items open in a terminal."
-    }
-  elif [[ -n "$helper" ]]; then
+  if [[ -n "$helper" ]]; then
     missing=$(missing_from "${PKGS_AUR_OPTIONAL[@]}")
     if [[ -n "$missing" ]]; then
       echo ":: Installing optional AUR packages via $helper"
       # shellcheck disable=SC2086
-      run_user "$helper" -S --needed --noconfirm $missing || \
+      if run_aur "$helper" -S --needed --noconfirm $missing; then
+        log_change "installed AUR extras: $(echo $missing | tr '\n' ' ')"
+      else
         echo ":: (AUR extras failed — continuing, they are optional)"
-      log_change "installed AUR extras: $(echo $missing | tr '\n' ' ')"
+      fi
     fi
   else
     echo ":: No AUR helper found — skipping optional extras (Heroic, ProtonUp-Qt, GOverlay)"
@@ -629,18 +819,26 @@ apply_tweaks() {
     run_root usermod -aG gamemode "$RUN_USER"
     log_change "added $RUN_USER to gamemode group"
   fi
+  if ! id -nG "$RUN_USER" | grep -qw input; then
+    echo ":: Adding $RUN_USER to input group for controller access (takes effect next login)"
+    run_root usermod -aG input "$RUN_USER"
+    log_change "added $RUN_USER to input group"
+  fi
   echo ":: Tweaks applied. Changes are logged in $LOGFILE"
 }
 
 plan_sysupdate() {
   echo "== Plan: full system upgrade =="
   echo "Will run: pacman -Syu (all packages updated to current)"
-  snapper_note
+  case "$(snapshot_tool)" in
+    snapper)   echo "A snapper snapshot will be taken first." ;;
+    timeshift) echo "A timeshift snapshot will be taken first." ;;
+  esac
   return 0
 }
 
 apply_sysupdate() {
-  snapper_note
+  snapper_note "full system upgrade"
   echo ":: Running full system upgrade (pacman -Syu)"
   run_root pacman -Syu --noconfirm
   log_change "ran full system upgrade (pacman -Syu)"
@@ -1026,6 +1224,43 @@ cmd_diagnose() {
       *)   : ;;  # hyprctl unavailable mid-session; skip silently
     esac
   fi
+
+  # -- 32-bit audio (Proton games are 32-bit clients surprisingly often) --
+  local a32miss=""
+  is_installed lib32-pipewire      || a32miss+="lib32-pipewire "
+  is_installed lib32-pipewire-jack || a32miss+="lib32-pipewire-jack "
+  if [[ -z "$a32miss" ]]; then
+    run_diag audio32 ok "Audio (32-bit)" "lib32 pipewire libraries present" ""
+  else
+    run_diag audio32 warn "Audio (32-bit)" \
+      "Missing: $a32miss— classic cause of silent Proton games" \
+      "Run Set up gaming (now includes the audio group)"
+  fi
+
+  # -- Controller support -------------------------------------------------
+  if ! is_installed game-devices-udev; then
+    run_diag ctl_udev warn "Controller udev rules" \
+      "game-devices-udev not installed — many gamepads/wheels won't be recognized" \
+      "Run Set up gaming (now includes controller support)"
+  else
+    run_diag ctl_udev ok "Controller udev rules" "game-devices-udev installed" ""
+  fi
+  if id -nG "$RUN_USER" 2>/dev/null | grep -qw input; then
+    run_diag ctl_grp ok "Controller access" "$RUN_USER is in the input group" ""
+  else
+    run_diag ctl_grp warn "Controller access" \
+      "$RUN_USER is not in the input group — some controllers need it" \
+      "Apply performance tweaks (adds the group; takes effect next login)"
+  fi
+  local pads
+  pads=$(grep -l . /sys/class/input/js*/device/name 2>/dev/null \
+         | xargs -r cat 2>/dev/null | paste -sd ', ' -) || true
+  if [[ -n "$pads" ]]; then
+    run_diag ctl_dev ok "Connected controllers" "$pads" ""
+  else
+    run_diag ctl_dev info "Connected controllers" \
+      "None detected right now (plug one in and re-run Diagnose)" ""
+  fi
 }
 
 # ---- restore / undo ------------------------------------------------------
@@ -1103,6 +1338,242 @@ cmd_log() {
 
 # ---------------------------------------------------------------- dispatch
 
+# ---- system-wide app list (Apps page) ----------------------------------
+# Shows what the USER installed (pacman -Qe = explicit), not the hundreds
+# of libraries that came along as dependencies. Critical system packages
+# are marked protected so the GUI never offers to remove them.
+PROTECTED_PKGS=" base base-devel linux linux-lts linux-zen linux-hardened
+  linux-cachyos linux-firmware mkinitcpio systemd sudo pacman bash
+  coreutils util-linux filesystem glibc grub efibootmgr networkmanager
+  network-manager-applet dhcpcd iwd sof-firmware amd-ucode intel-ucode "
+
+is_protected() {
+  [[ $PROTECTED_PKGS == *" $1 "* ]] && return 0
+  # kernels + their headers, and anything providing the running session
+  [[ $1 == linux-*-headers || $1 == *-ucode ]] && return 0
+  return 1
+}
+
+cmd_apps() {
+  # APP|source|name|version|size|protected|description
+  local line name ver size desc
+  while IFS= read -r line; do
+    name=${line%% *}; ver=${line#* }
+    size=$(pacman -Qi "$name" 2>/dev/null \
+           | grep -m1 '^Installed Size' | sed 's/.*: //')
+    desc=$(pacman -Qi "$name" 2>/dev/null \
+           | grep -m1 '^Description' | sed 's/.*: //' | tr -d '|')
+    printf 'APP|pacman|%s|%s|%s|%d|%s\n' \
+      "$name" "$ver" "${size:-?}" "$(is_protected "$name" && echo 1 || echo 0)" "$desc"
+  done < <(pacman -Qe 2>/dev/null)
+
+  if command -v flatpak &>/dev/null; then
+    while IFS=$'\t' read -r fname appid fver fsize; do
+      [[ -z "$appid" ]] && continue
+      printf 'APP|flatpak|%s|%s|%s|0|%s\n' \
+        "$appid" "$fver" "$fsize" "$(tr -d '|' <<<"$fname")"
+    done < <(flatpak list --app --columns=name,application,version,size 2>/dev/null)
+  fi
+}
+
+# ---- package uninstaller ----------------------------------------------
+# Splits like apply_selected: Flatpak app-ids vs pacman packages.
+# pacman -Rns removes the package, its now-unneeded deps, and its config;
+# it naturally refuses if something else still depends on the package.
+split_remove() {   # sets REM_FLAT / REM_PAC arrays from "$@"
+  REM_FLAT=(); REM_PAC=()
+  local known_flat=" " entry p
+  for entry in "${FLATPAK_APPS[@]}"; do known_flat+="${entry%%|*} "; done
+  for p in "$@"; do
+    if [[ $known_flat == *" $p "* ]] || [[ $p == *.*.* ]]; then
+      REM_FLAT+=("$p")
+    else
+      REM_PAC+=("$p")
+    fi
+  done
+}
+
+plan_remove() {
+  [[ $# -eq 0 ]] && { echo "Nothing selected."; return 0; }
+  echo "== Plan: uninstall =="
+  split_remove "$@"
+  if ((${#REM_PAC[@]})); then
+    echo "pacman will remove (incl. unneeded dependencies & config):"
+    # -Rnsp prints the full removal list without doing anything
+    if ! pacman -Rnsp --print-format '  %n-%v' "${REM_PAC[@]}" 2>&1; then
+      echo "  (a package above is required by others — pacman will refuse;"
+      echo "   remove the dependent packages first)"
+    fi
+  fi
+  ((${#REM_FLAT[@]})) && { echo "Flatpak will remove:"; printf '  %s\n' "${REM_FLAT[@]}"; }
+  return 0
+}
+
+apply_remove() {
+  [[ $# -eq 0 ]] && { echo "Nothing selected."; return 0; }
+  local p
+  for p in "$@"; do
+    if is_protected "$p"; then
+      echo ":: Refusing to remove '$p' — it is critical for a working system." >&2
+      return 1
+    fi
+  done
+  split_remove "$@"
+  if ((${#REM_PAC[@]})); then
+    snapper_note "uninstall: ${REM_PAC[*]}"
+    echo ":: Removing ${#REM_PAC[@]} package(s) via pacman -Rns"
+    if run_root pacman -Rns --noconfirm "${REM_PAC[@]}"; then
+      log_change "removed packages: ${REM_PAC[*]}"
+    else
+      echo ":: pacman refused (something still depends on a selected package)."
+      echo "   Check the plan preview — dependents must be removed first."
+      return 1
+    fi
+  fi
+  if ((${#REM_FLAT[@]})); then
+    echo ":: Removing ${#REM_FLAT[@]} Flatpak app(s)"
+    run_root flatpak uninstall -y --noninteractive "${REM_FLAT[@]}"
+    log_change "removed flatpak apps: ${REM_FLAT[*]}"
+  fi
+  echo ":: Uninstall complete."
+}
+
+# ---- manual snapshot ---------------------------------------------------
+plan_snapshot() {
+  echo "== Plan: create snapshot =="
+  case "$(snapshot_tool)" in
+    snapper)   echo "Will create a snapper snapshot of the root config." ;;
+    timeshift) echo "Will create a timeshift snapshot (can take a while)." ;;
+    none)      echo "No snapshot tool found."
+               echo "Install one first: snapper (btrfs) or timeshift (btrfs/rsync)." ;;
+  esac
+}
+
+apply_snapshot() {
+  if [[ "$(snapshot_tool)" == none ]]; then
+    echo ":: No snapshot tool installed (snapper or timeshift)." >&2
+    echo "   For btrfs roots: pacman -S snapper snap-pac, then: snapper -c root create-config /" >&2
+    return 1
+  fi
+  snapper_note "manual snapshot from Akari"
+  echo ":: Snapshot done."
+}
+
+# ---- paru bootstrap ---------------------------------------------------
+# Fresh Arch has no AUR helper; everything AUR-related in this tool needs
+# one. Build paru from the AUR the manual way (git + makepkg as the user).
+plan_paru() {
+  echo "== Plan: install paru (AUR helper) =="
+  if command -v paru &>/dev/null || command -v yay &>/dev/null; then
+    echo "An AUR helper is already installed — nothing to do."
+  else
+    echo "Will do:"
+    echo "  1. pacman -S --needed base-devel git   (build prerequisites)"
+    echo "  2. git clone https://aur.archlinux.org/paru-bin.git (as $RUN_USER)"
+    echo "  3. makepkg -si                          (build + install as $RUN_USER)"
+  fi
+}
+
+apply_paru() {
+  if command -v paru &>/dev/null || command -v yay &>/dev/null; then
+    echo ":: An AUR helper is already installed."; return 0
+  fi
+  echo ":: Installing build prerequisites (base-devel, git)"
+  run_root pacman -S --needed --noconfirm base-devel git
+
+  local bdir="$RUN_HOME/.cache/akari-paru-build"
+  echo ":: Building paru-bin from the AUR (as $RUN_USER)"
+  run_user rm -rf "$bdir"
+  run_user git clone --depth 1 https://aur.archlinux.org/paru-bin.git "$bdir"
+
+  # makepkg refuses root and needs pacman rights for -si; reuse the same
+  # temporary scoped sudoers rule as run_aur when we're the GUI's root.
+  if [[ $EUID -eq 0 && -n "${AKARI_USER:-}" ]]; then
+    local drop=/etc/sudoers.d/99-akari-aur-tmp rc=0
+    printf '%s ALL=(root) NOPASSWD: /usr/bin/pacman\n' "$AKARI_USER" > "$drop"
+    chmod 0440 "$drop"
+    runuser -u "$AKARI_USER" -- bash -c "cd '$bdir' && makepkg -si --noconfirm" || rc=$?
+    rm -f "$drop"
+    (( rc )) && { echo ":: paru build failed."; return $rc; }
+  else
+    ( cd "$bdir" && makepkg -si --noconfirm )
+  fi
+  run_user rm -rf "$bdir"
+  log_change "installed paru (AUR helper) via paru-bin"
+  echo ":: paru installed. AUR packages are now available in Akari."
+}
+
+# ---- mirror optimizer -------------------------------------------------
+plan_mirrors() {
+  echo "== Plan: optimize pacman mirrors =="
+  echo "Will do:"
+  is_installed reflector || echo "  - pacman -S reflector"
+  echo "  - backup /etc/pacman.d/mirrorlist -> mirrorlist.akari.bak"
+  echo "  - reflector: 20 freshest HTTPS mirrors, sorted by download rate"
+  echo "  - pacman -Syy (refresh databases against the new mirrors)"
+}
+
+apply_mirrors() {
+  is_installed reflector || {
+    echo ":: Installing reflector"
+    run_root pacman -S --needed --noconfirm reflector
+  }
+  echo ":: Backing up mirrorlist (mirrorlist.akari.bak)"
+  run_root cp /etc/pacman.d/mirrorlist /etc/pacman.d/mirrorlist.akari.bak
+  echo ":: Ranking mirrors (this takes ~30s)"
+  run_root reflector --protocol https --age 12 --latest 30 --fastest 20 \
+    --sort rate --save /etc/pacman.d/mirrorlist
+  log_change "optimized mirrorlist via reflector (backup at mirrorlist.akari.bak)"
+  echo ":: Refreshing package databases"
+  run_root pacman -Syy
+  echo ":: Mirrors optimized."
+}
+
+# ---- maintenance / cleanup --------------------------------------------
+plan_cleanup() {
+  echo "== Plan: system cleanup =="
+  local cache orph
+  cache=$(du -sh /var/cache/pacman/pkg 2>/dev/null | cut -f1)
+  orph=$(pacman -Qtdq 2>/dev/null | wc -l)
+  echo "Will do:"
+  echo "  - trim package cache to 2 most recent versions (currently ${cache:-?})"
+  is_installed pacman-contrib || echo "    (installs pacman-contrib for paccache)"
+  if (( orph )); then
+    echo "  - remove $orph orphaned packages:"
+    pacman -Qtdq 2>/dev/null | sed 's/^/      /'
+  else
+    echo "  - orphan removal: none found"
+  fi
+}
+
+apply_cleanup() {
+  is_installed pacman-contrib || {
+    echo ":: Installing pacman-contrib (provides paccache)"
+    run_root pacman -S --needed --noconfirm pacman-contrib
+  }
+  local before after
+  before=$(du -sm /var/cache/pacman/pkg 2>/dev/null | cut -f1)
+  echo ":: Trimming package cache (keeping 2 versions per package)"
+  run_root paccache -rk2
+  run_root paccache -ruk0   # drop cached versions of uninstalled packages
+  after=$(du -sm /var/cache/pacman/pkg 2>/dev/null | cut -f1)
+  echo ":: Cache: ${before:-?} MiB -> ${after:-?} MiB"
+
+  local orphans
+  orphans=$(pacman -Qtdq 2>/dev/null || true)
+  if [[ -n "$orphans" ]]; then
+    echo ":: Removing $(wc -l <<<"$orphans") orphaned packages"
+    # shellcheck disable=SC2086
+    run_root pacman -Rns --noconfirm $orphans
+    log_change "cleanup: removed orphans: $(echo $orphans | tr '\n' ' ')"
+  else
+    echo ":: No orphaned packages."
+  fi
+  log_change "cleanup: trimmed pacman cache (${before:-?} -> ${after:-?} MiB)"
+  echo ":: Cleanup complete."
+}
+
+
 AKARI_VERSION="0.1.0"
 
 case "${1:-}" in
@@ -1115,20 +1586,23 @@ akari-setup — Akari Tool Linux backend (works standalone, no GUI needed)
   packages                       gaming package list with install state
   kernels                        available kernels with install/running state
   diagnose                       functional tests of the gaming stack
+  apps                           everything the user installed (for the Apps page)
   restore-list                   backups available to restore
   log                            everything this tool changed
   plan  <target>                 dry-run: what an apply would do
   apply <target>                 do it (uses sudo per command)
 
   targets: gaming, multilib, tweaks, sysupdate, all,
+           paru, mirrors, cleanup, snapshot, flatpak-setup, flatpak <appid...>,
            kernel <name>, remove-kernel <name>,
-           selected <pkg...>, restore <backup-id>
+           selected <pkg...>, remove <pkg...>, restore <backup-id>
 HELP
     ;;
   check)    cmd_check ;;
   packages) cmd_packages ;;
   kernels)  cmd_kernels ;;
   diagnose) cmd_diagnose ;;
+  apps)     cmd_apps ;;
   restore-list) cmd_restore_list ;;
   log)      cmd_log ;;
   plan)   case "${2:-gaming}" in
@@ -1138,8 +1612,14 @@ HELP
             kernel)        plan_kernel "${3:-}" ;;
             remove-kernel) plan_remove_kernel "${3:-}" ;;
             sysupdate)     plan_sysupdate ;;
+            paru)          plan_paru ;;
+            snapshot)      plan_snapshot ;;
+            flatpak-setup) plan_flatpak_setup ;;
+            mirrors)       plan_mirrors ;;
+            cleanup)       plan_cleanup ;;
             all)           plan_all ;;
             restore)       plan_restore "${3:-}" ;;
+            remove)        shift 2; plan_remove "$@" ;;
             *) echo "unknown plan target"; exit 1 ;;
           esac ;;
   apply)  case "${2:-}" in
@@ -1149,9 +1629,16 @@ HELP
             kernel)        apply_kernel "${3:-}" ;;
             remove-kernel) remove_kernel "${3:-}" ;;
             sysupdate)     apply_sysupdate ;;
+            paru)          apply_paru ;;
+            snapshot)      apply_snapshot ;;
+            flatpak-setup) apply_flatpak_setup ;;
+            flatpak)       shift 2; apply_flatpak "$@" ;;
+            mirrors)       apply_mirrors ;;
+            cleanup)       apply_cleanup ;;
             all)           apply_all ;;
             restore)       apply_restore "${3:-}" ;;
             selected)      shift; apply_selected "$@" ;;
+            remove)        shift 2; apply_remove "$@" ;;
             *) echo "usage: $0 apply {gaming|multilib|tweaks|kernel <name>|remove-kernel <name>|selected pkg...}"; exit 1 ;;
           esac ;;
   *) echo "usage: $0 {check|packages|kernels|plan gaming|apply {gaming|multilib|tweaks|kernel <name>|selected pkg...}}"; exit 1 ;;

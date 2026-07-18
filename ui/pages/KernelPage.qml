@@ -123,15 +123,11 @@ ColumnLayout {
                         var name = modelData.name
                         var isAur = modelData.source === "aur"
                         page.confirmDialog.openWith(
-                            (isAur ? "Install (in terminal) " : "Install ") + name,
+                            "Install " + name
+                                + (isAur ? " (AUR — builds in-app, can take a while)" : ""),
                             "kernel " + name,
                             function() {
-                                if (isAur) {
-                                    if (!bridge.runInTerminal(["apply", "kernel", name]))
-                                        bridge.applyKernel(name)  // surfaces the clear error
-                                } else {
-                                    bridge.applyKernel(name)
-                                }
+                                bridge.applyKernel(name)
                             })
                     }
                 }

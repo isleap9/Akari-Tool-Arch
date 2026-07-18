@@ -80,31 +80,41 @@ ApplicationWindow {
                     selected: root.currentPage === 2 && !root.showLog
                     onNavigate: root.currentPage = 2
                 }
+                NavItem {
+                    label: "Apps"; glyph: "\u25A6"
+                    selected: root.currentPage === 3 && !root.showLog
+                    onNavigate: root.currentPage = 3
+                }
 
                 SectionLabel { text: "OPTIMIZE" }
                 NavItem {
                     label: "Kernel"; glyph: "\u2699"
-                    selected: root.currentPage === 3 && !root.showLog
-                    onNavigate: root.currentPage = 3
+                    selected: root.currentPage === 4 && !root.showLog
+                    onNavigate: root.currentPage = 4
+                }
+                NavItem {
+                    label: "Maintenance"; glyph: "\u2692"
+                    selected: root.currentPage === 5 && !root.showLog
+                    onNavigate: root.currentPage = 5
                 }
 
                 SectionLabel { text: "HEALTH" }
                 NavItem {
                     label: "Diagnose"; glyph: "\u2695"
-                    selected: root.currentPage === 4 && !root.showLog
-                    onNavigate: root.currentPage = 4
+                    selected: root.currentPage === 6 && !root.showLog
+                    onNavigate: root.currentPage = 6
                 }
 
                 SectionLabel { text: "ADVANCED" }
                 NavItem {
                     label: "Restore"; glyph: "\u21BA"
-                    selected: root.currentPage === 5 && !root.showLog
-                    onNavigate: root.currentPage = 5
+                    selected: root.currentPage === 7 && !root.showLog
+                    onNavigate: root.currentPage = 7
                 }
                 NavItem {
                     label: "Change Log"; glyph: "\u2630"
-                    selected: root.currentPage === 6 && !root.showLog
-                    onNavigate: root.currentPage = 6
+                    selected: root.currentPage === 8 && !root.showLog
+                    onNavigate: root.currentPage = 8
                 }
 
                 Item { Layout.fillHeight: true }
@@ -132,10 +142,12 @@ ApplicationWindow {
                     text: root.showLog ? "Running" :
                           root.currentPage === 1 ? "Gaming Packages" :
                           root.currentPage === 2 ? "Launch Options" :
-                          root.currentPage === 3 ? "Kernel" :
-                          root.currentPage === 4 ? "Diagnose" :
-                          root.currentPage === 5 ? "Restore" :
-                          root.currentPage === 6 ? "Change Log" : "Akari Tool"
+                          root.currentPage === 3 ? "Apps" :
+                          root.currentPage === 4 ? "Kernel" :
+                          root.currentPage === 5 ? "Maintenance" :
+                          root.currentPage === 6 ? "Diagnose" :
+                          root.currentPage === 7 ? "Restore" :
+                          root.currentPage === 8 ? "Change Log" : "Akari Tool"
                     font.pixelSize: 28; font.bold: true
                 }
                 Label {
@@ -145,12 +157,16 @@ ApplicationWindow {
                           : root.currentPage === 2
                           ? "Build a Steam launch options string from toggles"
                           : root.currentPage === 3
-                          ? "Install an alternative kernel for gaming or stability"
+                          ? "Everything installed on this machine — search & uninstall"
                           : root.currentPage === 4
-                          ? "Functional tests of the gaming stack"
+                          ? "Install an alternative kernel for gaming or stability"
                           : root.currentPage === 5
-                          ? "Undo changes — restore backed-up config files"
+                          ? "One-click upkeep — AUR helper, mirrors & cleanup"
                           : root.currentPage === 6
+                          ? "Functional tests of the gaming stack"
+                          : root.currentPage === 7
+                          ? "Undo changes — restore backed-up config files"
+                          : root.currentPage === 8
                           ? "A record of everything this tool changed"
                           : "Gaming setup for vanilla Arch — dependencies, drivers & tweaks"
                     color: Theme.textSecondary; font.pixelSize: 13
@@ -160,12 +176,14 @@ ApplicationWindow {
             StackLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                currentIndex: root.showLog ? 7 : root.currentPage
+                currentIndex: root.showLog ? 9 : root.currentPage
 
                 OverviewPage      { confirmDialog: confirmDlg }
                 GamingPage        { confirmDialog: confirmDlg }
                 LaunchOptionsPage {}
+                AppsPage          { confirmDialog: confirmDlg }
                 KernelPage        { confirmDialog: confirmDlg }
+                MaintenancePage   { confirmDialog: confirmDlg }
                 DiagnosePage      {}
                 RestorePage       { confirmDialog: confirmDlg }
                 ChangeLogPage     {}
