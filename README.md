@@ -84,6 +84,6 @@ new page = file in `ui/pages/` + NavItem + StackLayout entry.
 ## Status
 
 v0.2.0 — tested on one gloriously complicated machine (Hyprland, Secure Boot,
-UKI + GRUB, snapper, hybrid AMD iGPU + RTX 5070, nvidia-open-dkms) and a
+UKI + GRUB, snapper, AMD Ryzen 7 5800x, RTX 5070, (nvidia-open-dkms) and a
 fresh-install VM.
 Bug reports welcome — that's how v0.3 gets built.
