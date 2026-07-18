@@ -1,6 +1,6 @@
 # Maintainer: isleap
 pkgname=akari-tool
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="Gaming setup tool for vanilla Arch — dependencies, drivers, kernels & diagnosis"
 arch=('any')
