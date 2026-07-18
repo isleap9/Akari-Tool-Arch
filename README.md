@@ -76,14 +76,18 @@ The backend works standalone with no GUI:
 ## Architecture
 
 ```
-backend/akari-setup.sh   bash    — ALL system logic (check / plan / apply)
+backend/akari-setup.sh   bash    — entry point: shell options, module loader, dispatch
+backend/lib/*.sh         bash    — ALL system logic, one module per concern
+                                    (core, checks, kernels, plans, diagnose,
+                                     steam, maintenance, ...), sourced in order
 akari/                   python  — thin Qt host (QProcess bridge, no logic)
 ui/                      QML     — Material dark UI (components + pages)
 packaging/               —       — PKGBUILD, .desktop, icon
 docs/                    —       — screenshots
 ```
 
-Rules: system logic only in bash; colors only in `ui/components/Theme.qml`;
+Rules: system logic only in bash (new logic goes in the matching lib/ module,
+or a new NN-name.sh — the NN prefix sets source order); colors only in `ui/components/Theme.qml`;
 new page = file in `ui/pages/` + NavItem + StackLayout entry.
 
 ## Status

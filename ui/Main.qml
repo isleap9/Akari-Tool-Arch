@@ -120,7 +120,7 @@ ApplicationWindow {
                 Item { Layout.fillHeight: true }
 
                 Label {
-                    text: "v0.3 · bash backend"
+                    text: "v0.2 · bash backend"
                     font.pixelSize: 10; color: Theme.textFaint
                     Layout.bottomMargin: 4
                 }
