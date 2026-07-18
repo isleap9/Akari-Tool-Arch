@@ -17,7 +17,7 @@ optdepends=(
   'pacman-contrib: package cache cleanup'
 )
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('536a9567c840108bb74d0f92f31a49f2b76f410dab4c7ae060c14daf43f70375')
+sha256sums=('a9b21953834a429eb8e5208265814c0a4f57fcf5b96326f6ea963653b65458f1')
 
 package() {
   cd "Akari-Tool-Arch-$pkgver"
