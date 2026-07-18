@@ -9,6 +9,10 @@ Flickable {
     contentHeight: col.height + 56
     clip: true
 
+    property var confirmDialog: null
+
+    Component.onCompleted: bridge.refreshSteamGames()
+
     ColumnLayout {
         id: col
         anchors.top: parent.top
@@ -127,6 +131,78 @@ Flickable {
                     }
                     Label { text: "Fullscreen"; color: Theme.textSecondary; font.pixelSize: 12 }
                     CheckBox { id: gsFull; checked: true }
+                }
+            }
+        }
+
+        // ---- apply directly to a Steam game ------------------------------
+        Pane {
+            Layout.fillWidth: true
+            Material.elevation: 1
+            Material.background: Theme.surface
+            padding: 16
+
+            contentItem: ColumnLayout {
+                spacing: 10
+
+                Label {
+                    text: "Apply to a Steam game"
+                    color: Theme.textPrimary
+                    font.pixelSize: 14
+                    font.bold: true
+                }
+                Label {
+                    Layout.fillWidth: true
+                    visible: bridge.steamGames.length === 0
+                    text: "No Steam library found (or Steam isn't set up yet). " +
+                          "You can still copy the string above and paste it manually."
+                    color: Theme.textMuted
+                    font.pixelSize: 12
+                    wrapMode: Text.Wrap
+                }
+
+                RowLayout {
+                    visible: bridge.steamGames.length > 0
+                    spacing: 12
+                    Layout.fillWidth: true
+
+                    ComboBox {
+                        id: gamePicker
+                        Layout.fillWidth: true
+                        model: bridge.steamGames
+                        textRole: "name"
+                    }
+                    Button {
+                        text: "Apply"
+                        highlighted: true
+                        Material.elevation: 0
+                        enabled: gamePicker.currentIndex >= 0 && !bridge.running
+                        onClicked: {
+                            var game = bridge.steamGames[gamePicker.currentIndex]
+                            var opts = page.buildString()
+                            page.confirmDialog.openWithText(
+                                "Set launch options — " + game.name,
+                                "Steam must be closed (it overwrites this file on exit).\n\n" +
+                                "New launch options:\n  " + opts +
+                                (game.launchOptions.length > 0
+                                    ? "\n\nReplaces current:\n  " + game.launchOptions
+                                    : "\n\n(no launch options currently set)") +
+                                "\n\nA backup of localconfig.vdf is kept and " +
+                                "listed under Restore.",
+                                function() { bridge.applyLaunchOptions(game.appid, opts) })
+                        }
+                    }
+                }
+                Label {
+                    visible: bridge.steamGames.length > 0 && gamePicker.currentIndex >= 0
+                             && bridge.steamGames[gamePicker.currentIndex].launchOptions.length > 0
+                    Layout.fillWidth: true
+                    text: "Current: " + (gamePicker.currentIndex >= 0
+                              ? bridge.steamGames[gamePicker.currentIndex].launchOptions : "")
+                    color: Theme.textMuted
+                    font.family: "monospace"
+                    font.pixelSize: 11
+                    wrapMode: Text.Wrap
                 }
             }
         }

@@ -180,7 +180,7 @@ ApplicationWindow {
 
                 OverviewPage      { confirmDialog: confirmDlg }
                 GamingPage        { confirmDialog: confirmDlg }
-                LaunchOptionsPage {}
+                LaunchOptionsPage { confirmDialog: confirmDlg }
                 AppsPage          { confirmDialog: confirmDlg }
                 KernelPage        { confirmDialog: confirmDlg }
                 MaintenancePage   { confirmDialog: confirmDlg }

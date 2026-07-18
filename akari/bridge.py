@@ -31,6 +31,7 @@ class Bridge(QObject):
     kernelsChanged = Signal()
     diagnosticsChanged = Signal()
     restoreItemsChanged = Signal()
+    steamGamesChanged = Signal()
     planChanged = Signal()
     changeLogChanged = Signal()
 
@@ -42,6 +43,7 @@ class Bridge(QObject):
         self._kernels: list = []    # [{"name","source","description","installed","running"}]
         self._diagnostics: list = []  # [{"key","state","title","detail","fix"}]
         self._restore: list = []      # [{"id","backup","original","when"}]
+        self._steam_games: list = []  # [{"appid","name","launchOptions"}]
         self._running = False
         self._applying = False
         self._log = ""
@@ -97,6 +99,10 @@ class Bridge(QObject):
     @Property("QVariantList", notify=restoreItemsChanged)
     def restoreItems(self):
         return self._restore
+
+    @Property("QVariantList", notify=steamGamesChanged)
+    def steamGames(self):
+        return self._steam_games
 
     # ---- slots callable from QML ----------------------------------------
     @Slot(str, str)
@@ -180,6 +186,16 @@ class Bridge(QObject):
         self._enqueue(["apply", "restore", backup_id])
 
     @Slot()
+    def refreshSteamGames(self):
+        self._enqueue(["steam-games"])
+
+    @Slot(str, str)
+    def applyLaunchOptions(self, appid: str, options: str):
+        """Write launch options into Steam's localconfig.vdf (user file —
+        runs unprivileged, no pkexec)."""
+        self._enqueue(["apply", "launchopts", appid, options])
+
+    @Slot()
     def refreshChangeLog(self):
         self._changelog = ""
         self._enqueue(["log"])
@@ -199,7 +215,8 @@ class Bridge(QObject):
     def _start(self, args: list):
         self._mode = args[0]
         self._proc = QProcess(self)
-        if args[0] == "apply" and shutil.which("pkexec"):
+        needs_root = args[0] == "apply" and args[1:2] != ["launchopts"]
+        if needs_root and shutil.which("pkexec"):
             # One polkit prompt for the whole apply; the script runs as
             # root with the real user's identity passed through.
             self._proc.setProgram("pkexec")
@@ -226,6 +243,8 @@ class Bridge(QObject):
             self._diagnostics = []
         elif args[0] == "restore-list":
             self._restore = []
+        elif args[0] == "steam-games":
+            self._steam_games = []
         self._set_running(True, applying=(args[0] == "apply"))
         self._proc.start()
 
@@ -295,6 +314,15 @@ class Bridge(QObject):
                         {"id": bid, "backup": backup,
                          "original": original, "when": when})
             self.restoreItemsChanged.emit()
+        elif self._mode == "steam-games":
+            for line in text.splitlines():
+                parts = line.split("|", 3)
+                if len(parts) == 4 and parts[0] == "SGM":
+                    _, appid, name, opts = parts
+                    self._steam_games.append(
+                        {"appid": appid, "name": name,
+                         "launchOptions": opts})
+            self.steamGamesChanged.emit()
         elif self._mode == "plan":
             self._plan += text
             self.planChanged.emit()
@@ -326,6 +354,7 @@ class Bridge(QObject):
         if was_apply:
             # refresh every view after an apply
             self._queue.insert(0, ["restore-list"])
+            self._queue.insert(0, ["steam-games"])
             self._queue.insert(0, ["log"])
             self._queue.insert(0, ["kernels"])
             self._queue.insert(0, ["apps"])

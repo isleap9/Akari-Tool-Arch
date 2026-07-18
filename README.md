@@ -33,6 +33,10 @@ record every change after.**
 - **Maintenance** — bootstrap paru, rank the fastest pacman mirrors
   (reflector), trim the package cache & remove orphans, set up Flatpak +
   Flathub, and take manual snapshots — each a one-click card with live status
+- **Safe system updates** — the upgrade plan shows the pending package list,
+  flags kernel updates, and pulls the latest Arch news headlines (the
+  manual-intervention notices) before you confirm; afterwards Akari reports
+  new `.pacnew` files and warns when a reboot is needed
 - **Snapshots before every change** — with snapper (btrfs) or timeshift
   installed, Akari takes a real pre-change snapshot before installs, kernel
   changes, upgrades, and removals (and steps aside if snap-pac already
@@ -42,7 +46,8 @@ record every change after.**
   every kernel, is audio alive (incl. lib32), controllers detected and
   permissioned, Steam-on-NTFS, Hyprland gaming settings
 - **Launch options builder** — compose `gamemoderun mangohud gamescope ... %command%`
-  from toggles
+  from toggles, then apply it **directly to a Steam game** (safe VDF edit
+  with backup, refuses while Steam runs)
 - **Trust layer** — every action shows its plan first, streams live output,
   logs every change, keeps backups, and offers one-click restore.
 
