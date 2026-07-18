@@ -1340,7 +1340,7 @@ cmd_log() {
 # ---------------------------------------------------------------- dispatch
 
 # ---- self-update -------------------------------------------------------
-AKARI_REPO="isleap/Akari-Tool-Arch"
+AKARI_REPO="isleap9/Akari-Tool-Arch"
 
 # Where does this installation live, and how was it installed?
 akari_root() {   # repo root when running from a git checkout, else ""

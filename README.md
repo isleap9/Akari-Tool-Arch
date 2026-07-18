@@ -52,7 +52,7 @@ From source (Arch):
 
 ```bash
 sudo pacman -S pyside6
-git clone https://github.com/isleap/Akari-Tool-Arch
+git clone https://github.com/isleap9/Akari-Tool-Arch
 cd Akari-Tool-Arch
 python main.py
 ```
