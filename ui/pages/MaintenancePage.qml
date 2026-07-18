@@ -87,6 +87,17 @@ Item {
                 function() { bridge.run("apply", "flatpak-setup") })
         }
 
+        StatusCard {
+            title: "Akari Updates"
+            subtitle: page.det("update", "Check GitHub for a newer version of Akari Tool.")
+            state_: page.st("update")
+            actionText: "Update Akari"
+            busy: bridge.running
+            onAction: page.confirmDialog.openWith(
+                "Update Akari Tool", "self-update",
+                function() { bridge.run("apply", "self-update") })
+        }
+
         // fill remaining grid space so cards stay at the top
         Item { Layout.fillHeight: true; Layout.columnSpan: parent.columns }
     }
