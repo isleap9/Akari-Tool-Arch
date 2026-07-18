@@ -25,7 +25,7 @@ unset _mod
 
 # ---------------------------------------------------------------- dispatch
 
-AKARI_VERSION="0.2.2"
+AKARI_VERSION="0.3.1"
 
 case "${1:-}" in
   --version|-V) echo "akari-setup $AKARI_VERSION" ;;
