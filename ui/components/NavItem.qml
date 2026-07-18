@@ -20,30 +20,40 @@ ItemDelegate {
             id: bar
             anchors.verticalCenter: parent.verticalCenter
             anchors.left: parent.left
-            anchors.leftMargin: 6
-            width: 3; height: 18; radius: 1.5
-            color: nav.selected ? Theme.accent : "transparent"
+            anchors.leftMargin: 0
+            width: 3
+            height: nav.selected ? 18 : 0
+            radius: 1.5
+            color: Theme.accent
+            Behavior on height { NumberAnimation { duration: Theme.animFast; easing.type: Easing.OutCubic } }
         }
         Label {
             id: glyphLabel
             anchors.verticalCenter: parent.verticalCenter
-            anchors.left: bar.right
-            anchors.leftMargin: 10
+            anchors.left: parent.left
+            anchors.leftMargin: 14
+            width: 18
+            horizontalAlignment: Text.AlignHCenter
             text: nav.glyph
-            color: nav.selected ? Theme.textPrimary : "#888"
+            font.pixelSize: 13
+            color: nav.selected ? Theme.accent : Theme.textMuted
+            Behavior on color { ColorAnimation { duration: Theme.animFast } }
         }
         Label {
             anchors.verticalCenter: parent.verticalCenter
             anchors.left: glyphLabel.right
             anchors.leftMargin: 10
             text: nav.label
-            color: nav.selected ? Theme.textPrimary : "#999"
-            font.pixelSize: 13
+            color: nav.selected ? Theme.textPrimary
+                 : nav.hovered  ? Theme.textSecondary : Theme.textMuted
+            font.pixelSize: Theme.fsBody
+            Behavior on color { ColorAnimation { duration: Theme.animFast } }
         }
     }
     background: Rectangle {
         radius: 6
         color: nav.selected ? Theme.navSelected
              : nav.hovered  ? Theme.navHover : "transparent"
+        Behavior on color { ColorAnimation { duration: Theme.animFast } }
     }
 }

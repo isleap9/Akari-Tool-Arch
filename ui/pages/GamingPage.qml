@@ -116,7 +116,7 @@ ColumnLayout {
         Layout.rightMargin: Theme.pagePadding
         Layout.bottomMargin: Theme.pagePadding
         clip: true
-        spacing: 2
+        spacing: 4
         model: bridge.packages
 
         section.property: "group"
@@ -135,9 +135,13 @@ ColumnLayout {
         delegate: Rectangle {
             required property var modelData
             width: list.width
-            height: 40
-            radius: 6
-            color: hoverArea.hovered ? Theme.navHover : Theme.surface
+            height: 42
+            radius: Theme.rowRadius
+            color: hoverArea.hovered ? Theme.surfaceHover : Theme.surface
+            border.width: 1
+            border.color: hoverArea.hovered ? Theme.borderHover : Theme.border
+            Behavior on color        { ColorAnimation { duration: Theme.animFast } }
+            Behavior on border.color { ColorAnimation { duration: Theme.animFast } }
 
             RowLayout {
                 anchors.fill: parent
@@ -162,10 +166,9 @@ ColumnLayout {
                     color: modelData.installed ? Theme.textMuted : Theme.textPrimary
                 }
                 Item { Layout.fillWidth: true }
-                Label {
-                    text: modelData.installed ? "installed" : "missing"
-                    font.pixelSize: 11
-                    color: modelData.installed ? Theme.ok : Theme.warn
+                Badge {
+                    text: modelData.installed ? "INSTALLED" : "MISSING"
+                    tint: modelData.installed ? Theme.ok : Theme.warn
                 }
                 Button {
                     visible: modelData.installed && modelData.group !== "gpu"

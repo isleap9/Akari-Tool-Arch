@@ -34,9 +34,15 @@ Flickable {
         // ---- result ------------------------------------------------------
         Pane {
             Layout.fillWidth: true
-            Material.elevation: 1
+            Material.elevation: 0
             Material.background: Theme.surfaceLog
             padding: 14
+            background: Rectangle {
+                color: Theme.surfaceLog
+                radius: Theme.cardRadius
+                border.width: 1
+                border.color: Theme.border
+            }
 
             contentItem: RowLayout {
                 spacing: 12
@@ -75,9 +81,15 @@ Flickable {
         // ---- toggles -----------------------------------------------------
         Pane {
             Layout.fillWidth: true
-            Material.elevation: 1
+            Material.elevation: 0
             Material.background: Theme.surface
             padding: 16
+            background: Rectangle {
+                color: Theme.surface
+                radius: Theme.cardRadius
+                border.width: 1
+                border.color: Theme.border
+            }
 
             contentItem: ColumnLayout {
                 spacing: 2
@@ -138,9 +150,15 @@ Flickable {
         // ---- apply directly to a Steam game ------------------------------
         Pane {
             Layout.fillWidth: true
-            Material.elevation: 1
+            Material.elevation: 0
             Material.background: Theme.surface
             padding: 16
+            background: Rectangle {
+                color: Theme.surface
+                radius: Theme.cardRadius
+                border.width: 1
+                border.color: Theme.border
+            }
 
             contentItem: ColumnLayout {
                 spacing: 10

@@ -50,6 +50,10 @@ ColumnLayout {
             height: content.height + 28
             radius: Theme.cardRadius
             color: Theme.surface
+            border.width: 1
+            border.color: modelData.state === "warn" || modelData.state === "fail"
+                          ? Qt.alpha(Theme.stateColor(modelData.state), 0.35)
+                          : Theme.border
 
             ColumnLayout {
                 id: content
@@ -70,13 +74,11 @@ ColumnLayout {
                         font.bold: true
                         font.pixelSize: 14
                     }
-                    Label {
+                    Badge {
                         text: modelData.state === "ok"   ? "PASS"
                             : modelData.state === "info" ? "INFO"
                             : modelData.state === "warn" ? "WARN" : "FAIL"
-                        font.pixelSize: 10
-                        font.letterSpacing: 1
-                        color: Theme.stateColor(modelData.state)
+                        tint: Theme.stateColor(modelData.state)
                     }
                     Item { Layout.fillWidth: true }
                 }

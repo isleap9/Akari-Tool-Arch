@@ -48,7 +48,12 @@ ColumnLayout {
             width: list.width
             height: 72
             radius: Theme.cardRadius
-            color: Theme.surface
+            color: rowHover.hovered ? Theme.surfaceHover : Theme.surface
+            border.width: 1
+            border.color: rowHover.hovered ? Theme.borderHover : Theme.border
+            Behavior on color        { ColorAnimation { duration: Theme.animFast } }
+            Behavior on border.color { ColorAnimation { duration: Theme.animFast } }
+            HoverHandler { id: rowHover }
 
             Column {
                 anchors.verticalCenter: parent.verticalCenter

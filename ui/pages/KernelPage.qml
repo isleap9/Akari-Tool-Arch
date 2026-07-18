@@ -39,7 +39,13 @@ ColumnLayout {
             width: list.width
             height: 72
             radius: Theme.cardRadius
-            color: Theme.surface
+            color: rowHover.hovered ? Theme.surfaceHover : Theme.surface
+            border.width: 1
+            border.color: modelData.running ? Qt.alpha(Theme.ok, 0.3)
+                        : rowHover.hovered ? Theme.borderHover : Theme.border
+            Behavior on color        { ColorAnimation { duration: Theme.animFast } }
+            Behavior on border.color { ColorAnimation { duration: Theme.animFast } }
+            HoverHandler { id: rowHover }
 
             // Left: name + badges + description
             Column {
@@ -58,55 +64,25 @@ ColumnLayout {
                         font.pixelSize: 14
                         font.bold: true
                     }
-                    Rectangle {   // RUNNING badge
+                    Badge {
                         visible: modelData.running
                         anchors.verticalCenter: parent.verticalCenter
-                        radius: 4
-                        color: Qt.alpha(Theme.ok, 0.15)
-                        width: runLabel.width + 12
-                        height: 18
-                        Label {
-                            id: runLabel
-                            anchors.centerIn: parent
-                            text: "RUNNING"
-                            font.pixelSize: 9
-                            font.letterSpacing: 1
-                            color: Theme.ok
-                        }
+                        text: "RUNNING"
+                        tint: Theme.ok
                     }
-                    Rectangle {   // CachyOS repo badge
+                    Badge {
                         visible: modelData.source === "cachyos"
                         anchors.verticalCenter: parent.verticalCenter
-                        radius: 4
-                        color: Qt.alpha(Theme.ok, 0.15)
-                        width: cachyLabel.width + 12
-                        height: 18
-                        Label {
-                            id: cachyLabel
-                            anchors.centerIn: parent
-                            text: "CACHYOS REPO"
-                            font.pixelSize: 9
-                            font.letterSpacing: 1
-                            color: Theme.ok
-                        }
+                        text: "CACHYOS REPO"
+                        tint: Theme.info
                     }
-                    Rectangle {   // AUR badge
+                    Badge {
                         visible: modelData.source === "aur"
                         anchors.verticalCenter: parent.verticalCenter
-                        radius: 4
-                        color: Qt.alpha(Theme.warn, 0.15)
-                        width: aurLabel.width + 12
-                        height: 18
-                        Label {
-                            id: aurLabel
-                            anchors.centerIn: parent
-                            text: "AUR"
-                            font.pixelSize: 9
-                            font.letterSpacing: 1
-                            color: Theme.warn
-                        }
+                        text: "AUR"
+                        tint: Theme.warn
                     }
-                }
+                    }
                 Label {
                     text: modelData.description
                     color: Theme.textSecondary

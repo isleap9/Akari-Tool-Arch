@@ -3,46 +3,66 @@ import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
 
-Pane {
+// Status card: hairline border, hover lift, status badge in the corner.
+Rectangle {
     id: card
     property string title: ""
     property string subtitle: ""
-    property string state_: "unknown"   // ok | warn | fail | unknown
+    property string state_: "unknown"   // ok | info | warn | fail | unknown
     property string actionText: ""
     property bool busy: false
     signal action()
 
     Layout.fillWidth: true
-    Layout.preferredHeight: 122
-    Layout.minimumHeight: 122
-    Material.elevation: 1
-    Material.background: Theme.surface
-    padding: 16
+    Layout.preferredHeight: 128
+    Layout.minimumHeight: 128
+    radius: Theme.cardRadius
+    color: hover.hovered ? Theme.surfaceHover : Theme.surface
+    border.width: 1
+    border.color: card.state_ === "warn" || card.state_ === "fail"
+                  ? Qt.alpha(Theme.stateColor(card.state_), 0.35)
+                  : hover.hovered ? Theme.borderHover : Theme.border
+    Behavior on color        { ColorAnimation { duration: Theme.animFast } }
+    Behavior on border.color { ColorAnimation { duration: Theme.animFast } }
+    HoverHandler { id: hover }
 
-    contentItem: ColumnLayout {
+    ColumnLayout {
+        anchors.fill: parent
+        anchors.margins: 16
         spacing: 6
+
         RowLayout {
             spacing: 10
-            Rectangle {   // status chip
-                width: 9; height: 9; radius: 4.5
-                color: Theme.stateColor(card.state_)
+            Layout.fillWidth: true
+            Label {
+                text: card.title
+                font.bold: true
+                font.pixelSize: Theme.fsHeading
+                color: Theme.textPrimary
             }
-            Label { text: card.title; font.bold: true; font.pixelSize: 14 }
             Item { Layout.fillWidth: true }
+            Badge {
+                text: Theme.stateLabel(card.state_)
+                tint: Theme.stateColor(card.state_)
+            }
         }
         Label {
             text: card.subtitle
-            color: Theme.textSecondary; font.pixelSize: 12
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fsCaption
             wrapMode: Text.Wrap
+            elide: Text.ElideRight
+            maximumLineCount: 2
             Layout.fillWidth: true
         }
-        Item { Layout.fillHeight: true }   // spacer BEFORE the button:
-        Button {                           // text top, action bottom
+        Item { Layout.fillHeight: true }
+        Button {
             visible: card.actionText.length > 0
             text: card.actionText
             highlighted: true
             enabled: !card.busy
-            implicitHeight: 36
+            implicitHeight: 34
+            font.pixelSize: Theme.fsCaption
             Material.elevation: 0
             onClicked: card.action()
         }

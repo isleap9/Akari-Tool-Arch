@@ -21,6 +21,8 @@ ColumnLayout {
             anchors.fill: parent
             color: Theme.surfaceLog
             radius: Theme.cardRadius
+            border.width: 1
+            border.color: Theme.border
             z: -1
         }
         TextArea {
@@ -30,7 +32,7 @@ ColumnLayout {
             wrapMode: TextArea.Wrap
             font.family: "monospace"
             font.pixelSize: 12
-            color: "#C8C8C8"
+            color: Theme.textSecondary
             text: bridge.logText
             background: null
             onTextChanged: logFlick.contentY =

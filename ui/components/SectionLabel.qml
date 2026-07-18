@@ -3,8 +3,11 @@ import QtQuick.Controls
 import QtQuick.Layouts
 
 Label {
-    font.pixelSize: 10
-    font.letterSpacing: 1.5
-    color: Theme.textMuted
-    Layout.topMargin: 10
+    font.pixelSize: Theme.fsMicro
+    font.letterSpacing: 2
+    font.bold: true
+    color: Theme.textFaint
+    leftPadding: 10
+    Layout.topMargin: 14
+    Layout.bottomMargin: 2
 }

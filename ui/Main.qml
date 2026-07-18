@@ -16,11 +16,28 @@ ApplicationWindow {
     Material.accent: Theme.accent
     Material.primary: Theme.accent
     Material.background: Theme.background
+    color: Theme.background
 
     // Navigation. The live log overrides pages only while an APPLY runs
     // (plan/list fetches don't hijack the view).
-    property int currentPage: 0   // 0 Overview, 1 Gaming, 2 Kernel, 3 Change Log
+    property int currentPage: 0
     readonly property bool showLog: bridge.applying || bridge.logText.length > 0
+
+    readonly property var pageTitles: [
+        "Overview", "Gaming Packages", "Launch Options", "Apps",
+        "Kernel", "Maintenance", "Diagnose", "Restore", "Change Log"
+    ]
+    readonly property var pageSubtitles: [
+        "Gaming setup for vanilla Arch — dependencies, drivers & tweaks",
+        "Pick exactly what gets installed — missing packages are pre-selected",
+        "Build a Steam launch options string from toggles",
+        "Everything installed on this machine — search & uninstall",
+        "Install an alternative kernel for gaming or stability",
+        "One-click upkeep — AUR helper, mirrors & cleanup",
+        "Functional tests of the gaming stack",
+        "Undo changes — restore backed-up config files",
+        "A record of everything this tool changed"
+    ]
 
     ConfirmDialog {
         id: confirmDlg
@@ -37,15 +54,24 @@ ApplicationWindow {
             Layout.preferredWidth: 220
             color: Theme.surfaceAlt
 
+            // hairline separating sidebar from content
+            Rectangle {
+                anchors.right: parent.right
+                width: 1
+                height: parent.height
+                color: Theme.border
+            }
+
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 12
-                spacing: 4
+                spacing: 2
 
                 RowLayout {
-                    Layout.bottomMargin: 18
-                    Layout.topMargin: 6
-                    spacing: 8
+                    Layout.bottomMargin: 16
+                    Layout.topMargin: 8
+                    Layout.leftMargin: 4
+                    spacing: 10
                     Image {
                         source: "resources/AkariMark.png"
                         sourceSize.width: 26
@@ -55,16 +81,25 @@ ApplicationWindow {
                         fillMode: Image.PreserveAspectFit
                         smooth: true
                     }
-                    Label {
-                        text: "AKARI TOOL"
-                        font.letterSpacing: 2
-                        font.pixelSize: 12
-                        font.bold: true
-                        color: Theme.textPrimary
+                    ColumnLayout {
+                        spacing: 0
+                        Label {
+                            text: "AKARI"
+                            font.letterSpacing: 3
+                            font.pixelSize: 13
+                            font.bold: true
+                            color: Theme.textPrimary
+                        }
+                        Label {
+                            text: "TOOL FOR ARCH"
+                            font.letterSpacing: 2
+                            font.pixelSize: 8
+                            color: Theme.textFaint
+                        }
                     }
                 }
 
-                SectionLabel { text: "SETUP"; Layout.topMargin: 6 }
+                SectionLabel { text: "SETUP"; Layout.topMargin: 4 }
                 NavItem {
                     label: "Overview"; glyph: "\u2302"
                     selected: root.currentPage === 0 && !root.showLog
@@ -121,8 +156,10 @@ ApplicationWindow {
 
                 Label {
                     text: "v0.3 · bash backend"
-                    font.pixelSize: 10; color: Theme.textFaint
+                    font.pixelSize: Theme.fsMicro
+                    color: Theme.textFaint
                     Layout.bottomMargin: 4
+                    Layout.leftMargin: 10
                 }
             }
         }
@@ -133,44 +170,46 @@ ApplicationWindow {
             Layout.fillHeight: true
             spacing: 0
 
-            ColumnLayout {
+            // ---- page header ----
+            RowLayout {
                 Layout.fillWidth: true
-                Layout.margins: Theme.pagePadding
-                Layout.bottomMargin: 12
-                spacing: 4
-                Label {
-                    text: root.showLog ? "Running" :
-                          root.currentPage === 1 ? "Gaming Packages" :
-                          root.currentPage === 2 ? "Launch Options" :
-                          root.currentPage === 3 ? "Apps" :
-                          root.currentPage === 4 ? "Kernel" :
-                          root.currentPage === 5 ? "Maintenance" :
-                          root.currentPage === 6 ? "Diagnose" :
-                          root.currentPage === 7 ? "Restore" :
-                          root.currentPage === 8 ? "Change Log" : "Akari Tool"
-                    font.pixelSize: 28; font.bold: true
+                Layout.leftMargin: Theme.pagePadding
+                Layout.rightMargin: Theme.pagePadding
+                Layout.topMargin: 14
+                Layout.bottomMargin: 10
+                spacing: 12
+
+                Rectangle {   // accent tick anchoring the title
+                    width: 3
+                    Layout.preferredHeight: 30
+                    radius: 1.5
+                    color: Theme.accent
                 }
-                Label {
-                    text: root.showLog ? "Live output from the backend" :
-                          root.currentPage === 1
-                          ? "Pick exactly what gets installed — missing packages are pre-selected"
-                          : root.currentPage === 2
-                          ? "Build a Steam launch options string from toggles"
-                          : root.currentPage === 3
-                          ? "Everything installed on this machine — search & uninstall"
-                          : root.currentPage === 4
-                          ? "Install an alternative kernel for gaming or stability"
-                          : root.currentPage === 5
-                          ? "One-click upkeep — AUR helper, mirrors & cleanup"
-                          : root.currentPage === 6
-                          ? "Functional tests of the gaming stack"
-                          : root.currentPage === 7
-                          ? "Undo changes — restore backed-up config files"
-                          : root.currentPage === 8
-                          ? "A record of everything this tool changed"
-                          : "Gaming setup for vanilla Arch — dependencies, drivers & tweaks"
-                    color: Theme.textSecondary; font.pixelSize: 13
+                ColumnLayout {
+                    spacing: 1
+                    Label {
+                        id: pageTitle
+                        text: root.showLog ? "Running" : root.pageTitles[root.currentPage]
+                        font.pixelSize: Theme.fsTitle
+                        font.bold: true
+                        color: Theme.textPrimary
+                        opacity: 1
+                        Behavior on text {
+                            SequentialAnimation {
+                                NumberAnimation { target: pageTitle; property: "opacity"; to: 0; duration: 60 }
+                                PropertyAction {}
+                                NumberAnimation { target: pageTitle; property: "opacity"; to: 1; duration: Theme.animMed }
+                            }
+                        }
+                    }
+                    Label {
+                        text: root.showLog ? "Live output from the backend"
+                                           : root.pageSubtitles[root.currentPage]
+                        color: Theme.textSecondary
+                        font.pixelSize: Theme.fsCaption
+                    }
                 }
+                Item { Layout.fillWidth: true }
             }
 
             StackLayout {
@@ -193,26 +232,44 @@ ApplicationWindow {
                 }
             }
 
+            // ---- status footer ----
             Rectangle {
                 Layout.fillWidth: true
-                height: 30
+                height: 32
                 color: Theme.surfaceAlt
+                Rectangle {
+                    anchors.top: parent.top
+                    width: parent.width
+                    height: 1
+                    color: Theme.border
+                }
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 14
-                    anchors.rightMargin: 14
+                    anchors.leftMargin: 16
+                    anchors.rightMargin: 16
+                    spacing: 8
                     Rectangle {
+                        id: statusDot
                         width: 8; height: 8; radius: 4
                         color: bridge.running ? Theme.warn : Theme.ok
+                        SequentialAnimation on opacity {
+                            running: bridge.running
+                            loops: Animation.Infinite
+                            alwaysRunToEnd: true
+                            NumberAnimation { to: 0.3; duration: 500; easing.type: Easing.InOutSine }
+                            NumberAnimation { to: 1.0; duration: 500; easing.type: Easing.InOutSine }
+                        }
                     }
                     Label {
                         text: bridge.running ? "Working" : "Ready"
-                        font.pixelSize: 11; color: Theme.textSecondary
+                        font.pixelSize: 11
+                        color: Theme.textSecondary
                     }
                     Item { Layout.fillWidth: true }
                     Label {
                         text: "PySide6 · QML Material"
-                        font.pixelSize: 11; color: Theme.textFaint
+                        font.pixelSize: 11
+                        color: Theme.textFaint
                     }
                 }
             }

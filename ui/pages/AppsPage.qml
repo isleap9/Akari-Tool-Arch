@@ -67,15 +67,19 @@ ColumnLayout {
         Layout.rightMargin: Theme.pagePadding
         Layout.bottomMargin: Theme.pagePadding
         clip: true
-        spacing: 2
+        spacing: 4
         model: page.visibleApps()
 
         delegate: Rectangle {
             required property var modelData
             width: list.width
-            height: 52
-            radius: 6
-            color: hoverArea.hovered ? Theme.navHover : Theme.surface
+            height: 54
+            radius: Theme.rowRadius
+            color: hoverArea.hovered ? Theme.surfaceHover : Theme.surface
+            border.width: 1
+            border.color: hoverArea.hovered ? Theme.borderHover : Theme.border
+            Behavior on color        { ColorAnimation { duration: Theme.animFast } }
+            Behavior on border.color { ColorAnimation { duration: Theme.animFast } }
 
             RowLayout {
                 anchors.fill: parent
@@ -94,17 +98,15 @@ ColumnLayout {
                             font.pixelSize: 13
                             color: Theme.textPrimary
                         }
-                        Label {
-                            text: modelData.source === "flatpak" ? "flatpak" : ""
+                        Badge {
                             visible: modelData.source === "flatpak"
-                            font.pixelSize: 10
-                            color: Theme.accent
+                            text: "FLATPAK"
+                            tint: Theme.info
                         }
-                        Label {
-                            text: modelData.protected ? "system" : ""
+                        Badge {
                             visible: modelData.protected
-                            font.pixelSize: 10
-                            color: Theme.textMuted
+                            text: "SYSTEM"
+                            tint: Theme.textMuted
                         }
                     }
                     Label {

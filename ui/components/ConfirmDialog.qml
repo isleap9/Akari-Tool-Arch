@@ -30,6 +30,21 @@ Dialog {
     width: Math.min(560, parent ? parent.width - 80 : 560)
     Material.background: Theme.surface
 
+    background: Rectangle {
+        color: Theme.surface
+        radius: Theme.cardRadius
+        border.width: 1
+        border.color: Theme.borderHover
+    }
+
+    enter: Transition {
+        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.animFast }
+        NumberAnimation { property: "scale"; from: 0.97; to: 1; duration: Theme.animMed; easing.type: Easing.OutCubic }
+    }
+    exit: Transition {
+        NumberAnimation { property: "opacity"; to: 0; duration: Theme.animFast }
+    }
+
     contentItem: ColumnLayout {
         spacing: 12
         Flickable {
@@ -37,7 +52,14 @@ Dialog {
             Layout.preferredHeight: Math.min(planArea.contentHeight + 24, 320)
             contentHeight: planArea.height
             clip: true
-            Rectangle { anchors.fill: parent; color: Theme.surfaceLog; radius: 6; z: -1 }
+            Rectangle {
+                anchors.fill: parent
+                color: Theme.surfaceLog
+                radius: 6
+                border.width: 1
+                border.color: Theme.border
+                z: -1
+            }
             TextArea {
                 id: planArea
                 property bool usesBridgePlan: true
@@ -45,9 +67,9 @@ Dialog {
                 width: parent.width
                 readOnly: true
                 wrapMode: TextArea.Wrap
-                font.family: "monospace"
-                font.pixelSize: 12
-                color: "#C8C8C8"
+                font.family: Theme.monoFont
+                font.pixelSize: Theme.fsCaption
+                color: Theme.textSecondary
                 background: null
                 text: usesBridgePlan
                       ? (bridge.planText.length > 0 ? bridge.planText : "Loading plan…")

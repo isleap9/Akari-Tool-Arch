@@ -40,7 +40,7 @@ ColumnLayout {
         contentHeight: logArea.height
         clip: true
 
-        Rectangle { anchors.fill: parent; color: Theme.surfaceLog; radius: Theme.cardRadius; z: -1 }
+        Rectangle { anchors.fill: parent; color: Theme.surfaceLog; radius: Theme.cardRadius; border.width: 1; border.color: Theme.border; z: -1 }
         TextArea {
             id: logArea
             width: flick.width
@@ -48,7 +48,7 @@ ColumnLayout {
             wrapMode: TextArea.Wrap
             font.family: "monospace"
             font.pixelSize: 12
-            color: "#C8C8C8"
+            color: Theme.textSecondary
             text: bridge.changeLog
             background: null
         }
