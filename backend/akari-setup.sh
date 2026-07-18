@@ -1752,7 +1752,7 @@ apply_cleanup() {
 }
 
 
-AKARI_VERSION="0.2.1"
+AKARI_VERSION="0.2.2"
 
 case "${1:-}" in
   --version|-V) echo "akari-setup $AKARI_VERSION" ;;
