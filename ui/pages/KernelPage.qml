@@ -74,6 +74,22 @@ ColumnLayout {
                             color: Theme.ok
                         }
                     }
+                    Rectangle {   // CachyOS repo badge
+                        visible: modelData.source === "cachyos"
+                        anchors.verticalCenter: parent.verticalCenter
+                        radius: 4
+                        color: Qt.alpha(Theme.ok, 0.15)
+                        width: cachyLabel.width + 12
+                        height: 18
+                        Label {
+                            id: cachyLabel
+                            anchors.centerIn: parent
+                            text: "CACHYOS REPO"
+                            font.pixelSize: 9
+                            font.letterSpacing: 1
+                            color: Theme.ok
+                        }
+                    }
                     Rectangle {   // AUR badge
                         visible: modelData.source === "aur"
                         anchors.verticalCenter: parent.verticalCenter
@@ -122,9 +138,12 @@ ColumnLayout {
                     onClicked: {
                         var name = modelData.name
                         var isAur = modelData.source === "aur"
+                        var isCachy = modelData.source === "cachyos"
                         page.confirmDialog.openWith(
                             "Install " + name
-                                + (isAur ? " (AUR — builds in-app, can take a while)" : ""),
+                                + (isAur ? " (AUR — builds in-app, can take a while)"
+                                 : isCachy ? " (adds the official CachyOS repo, installs prebuilt)"
+                                 : ""),
                             "kernel " + name,
                             function() {
                                 bridge.applyKernel(name)

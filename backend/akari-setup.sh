@@ -110,7 +110,7 @@ KERNELS=(
   "linux|repo|Stock Arch kernel"
   "linux-zen|repo|Tuned for desktop responsiveness"
   "linux-lts|repo|Long-term support, most stable"
-  "linux-cachyos|aur|CachyOS: BORE scheduler & gaming optimizations"
+  "linux-cachyos|cachyos|CachyOS: BORE scheduler & gaming optimizations (prebuilt repo)"
 )
 
 # GPU driver sets (chosen by detect_gpu)
@@ -631,6 +631,68 @@ update_bootloader() {
   fi
 }
 
+# Add the official CachyOS package repository (prebuilt kernels — no
+# compiling). Fully non-interactive: imports their key, installs keyring +
+# mirrorlist from the mirror, and appends the repo matching this CPU's
+# x86-64 feature level (v4 > v3 > baseline). Safe to call repeatedly.
+CACHYOS_MIRROR="https://mirror.cachyos.org/repo/x86_64/cachyos"
+
+setup_cachyos_repo() {
+  if grep -Eq '^\s*\[cachyos' /etc/pacman.conf; then
+    echo ":: CachyOS repo already configured."
+    return 0
+  fi
+
+  echo ":: Adding the official CachyOS repository (one-time setup)"
+  snapper_note "add cachyos repo"
+
+  # 1) Their signing key
+  run_root pacman-key --recv-keys F3B607488DB35A47 --keyserver keyserver.ubuntu.com
+  run_root pacman-key --lsign-key F3B607488DB35A47
+
+  # 2) Keyring + mirrorlists straight from their mirror (versionless symlinks)
+  run_root pacman -U --noconfirm \
+    "${CACHYOS_MIRROR}/cachyos-keyring.pkg.tar.zst" \
+    "${CACHYOS_MIRROR}/cachyos-mirrorlist.pkg.tar.zst" \
+    "${CACHYOS_MIRROR}/cachyos-v3-mirrorlist.pkg.tar.zst" \
+    "${CACHYOS_MIRROR}/cachyos-v4-mirrorlist.pkg.tar.zst"
+
+  # 3) Pick the optimized repo tier this CPU supports
+  local level
+  level=$(/lib/ld-linux-x86-64.so.2 --help 2>/dev/null \
+            | grep -Eo 'x86-64-v[34] \(supported' \
+            | grep -Eo 'v[34]' | sort -r | head -n1 || true)
+  echo ":: CPU feature level: x86-64-${level:-baseline}"
+
+  {
+    echo ""
+    echo "# Added by Akari Tool — official CachyOS repos"
+    case "$level" in
+      v4)
+        echo "[cachyos-v4]"
+        echo "Include = /etc/pacman.d/cachyos-v4-mirrorlist"
+        echo "[cachyos-core-v4]"
+        echo "Include = /etc/pacman.d/cachyos-v4-mirrorlist"
+        echo "[cachyos-extra-v4]"
+        echo "Include = /etc/pacman.d/cachyos-v4-mirrorlist"
+        ;;
+      v3)
+        echo "[cachyos-v3]"
+        echo "Include = /etc/pacman.d/cachyos-v3-mirrorlist"
+        echo "[cachyos-core-v3]"
+        echo "Include = /etc/pacman.d/cachyos-v3-mirrorlist"
+        echo "[cachyos-extra-v3]"
+        echo "Include = /etc/pacman.d/cachyos-v3-mirrorlist"
+        ;;
+    esac
+    echo "[cachyos]"
+    echo "Include = /etc/pacman.d/cachyos-mirrorlist"
+  } | run_root tee -a /etc/pacman.conf >/dev/null
+
+  run_root pacman -Sy
+  log_change "added official CachyOS repositories to pacman.conf"
+}
+
 # Install a kernel (+ headers) alongside the current one. NEVER removes
 # the running kernel — the user picks the new one from the boot menu.
 apply_kernel() {
@@ -644,6 +706,12 @@ apply_kernel() {
 
   if is_installed "$name"; then
     echo ":: $name is already installed."
+  elif [[ $source == cachyos ]]; then
+    setup_cachyos_repo
+    snapper_note "install kernel $name"
+    echo ":: Installing $name + ${name}-headers via pacman (prebuilt — no compiling)"
+    run_root pacman -S --needed --noconfirm "$name" "${name}-headers"
+    log_change "installed kernel: $name (cachyos repo)"
   elif [[ $source == repo ]]; then
     snapper_note "install kernel $name"
     echo ":: Installing $name + ${name}-headers via pacman"
@@ -1002,6 +1070,19 @@ remove_kernel() {
     run_root rm -f "$leftover"
     log_change "deleted leftover initramfs: $leftover"
   fi
+
+  # Preset debris: pacman leaves a .pacsave of the (converted) preset, and
+  # setup_uki_preset left a .akari.bak of the original. With the kernel
+  # gone, both are orphans.
+  local p
+  for p in "/etc/mkinitcpio.d/${name}.preset.pacsave" \
+           "/etc/mkinitcpio.d/${name}.preset.akari.bak"; do
+    if run_root test -f "$p"; then
+      echo ":: Deleting orphaned preset file: $p"
+      run_root rm -f "$p"
+      log_change "deleted orphaned preset: $p"
+    fi
+  done
 
   update_bootloader
   echo ":: $name removed. If a custom GRUB entry (40_custom) referenced it,"
