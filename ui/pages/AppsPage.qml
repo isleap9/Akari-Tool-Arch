@@ -37,22 +37,50 @@ ColumnLayout {
         Layout.bottomMargin: 10
         spacing: 12
 
-        TextField {
-            id: search
+        Rectangle {
             Layout.fillWidth: true
-            placeholderText: "Search installed apps…"
-            onTextChanged: page.filter = text
+            implicitHeight: 40
+            radius: Theme.rowRadius
+            color: Theme.surface
+            border.width: 1
+            border.color: search.activeFocus ? Theme.borderFocus : Theme.border
+            Behavior on border.color { ColorAnimation { duration: Theme.animFast } }
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 14
+                anchors.rightMargin: 14
+                spacing: 10
+                Label {
+                    text: "\u2315"
+                    font.pixelSize: Theme.fsBody
+                    color: Theme.textFaint
+                }
+                TextField {
+                    id: search
+                    Layout.fillWidth: true
+                    placeholderText: "Search installed apps…"
+                    font.family: Theme.monoFont
+                    font.pixelSize: Theme.fsBody
+                    color: Theme.textPrimary
+                    placeholderTextColor: Theme.textMuted
+                    background: null
+                    onTextChanged: page.filter = text
+                }
+            }
         }
         Label {
             text: bridge.apps.length === 0
                   ? "Loading…"
-                  : list.model.length + " of " + bridge.apps.length + " apps"
+                  : list.model.length + " apps"
+            font.family: Theme.monoFont
             color: Theme.textSecondary
-            font.pixelSize: 12
+            font.pixelSize: Theme.fsLabel
         }
-        Button {
-            text: "Refresh"
-            flat: true
+        GhostButton {
+            text: "REFRESH"
+            implicitHeight: 36
+            font.pixelSize: Theme.fsBody
             enabled: !bridge.running
             onClicked: bridge.refreshApps()
         }
@@ -94,7 +122,7 @@ ColumnLayout {
                         spacing: 8
                         Label {
                             text: modelData.name
-                            font.family: "monospace"
+                            font.family: Theme.monoFont
                             font.pixelSize: 13
                             color: Theme.textPrimary
                         }
@@ -122,13 +150,11 @@ ColumnLayout {
                     font.pixelSize: 11
                     color: Theme.textMuted
                 }
-                Button {
+                OutlineActionButton {
                     visible: !modelData.protected
-                    text: "Remove"
-                    flat: true
+                    text: "REMOVE"
+                    tint: Theme.warn
                     implicitHeight: 30
-                    font.pixelSize: 11
-                    Material.foreground: Theme.warn
                     enabled: !bridge.running
                     onClicked: page.confirmDialog.openWith(
                         "Uninstall " + modelData.name,

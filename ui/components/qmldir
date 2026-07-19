@@ -1,6 +1,12 @@
 module components
 singleton Theme 1.0 Theme.qml
 NavItem 1.0 NavItem.qml
+StatusDot 1.0 StatusDot.qml
+PrimaryButton 1.0 PrimaryButton.qml
+GhostButton 1.0 GhostButton.qml
+HudSwitch 1.0 HudSwitch.qml
+HudChip 1.0 HudChip.qml
+OutlineActionButton 1.0 OutlineActionButton.qml
 Badge 1.0 Badge.qml
 StatusCard 1.0 StatusCard.qml
 SectionLabel 1.0 SectionLabel.qml

@@ -2,7 +2,7 @@
 import sys
 from pathlib import Path
 
-from PySide6.QtGui import QGuiApplication, QIcon
+from PySide6.QtGui import QFontDatabase, QGuiApplication, QIcon
 from PySide6.QtQml import QQmlApplicationEngine
 
 from .bridge import Bridge
@@ -16,6 +16,12 @@ def main() -> int:
     app.setOrganizationName("Akari")
     app.setDesktopFileName("akari-tool")   # matches future .desktop file
     app.setWindowIcon(QIcon(str(UI_DIR / "resources" / "AkariMark.png")))
+
+    # Bundled UI fonts (HUD / mono / body). Missing files fail silently —
+    # QML falls back to system fonts.
+    fonts_dir = UI_DIR / "resources" / "fonts"
+    for ttf in sorted(fonts_dir.glob("*.ttf")):
+        QFontDatabase.addApplicationFont(str(ttf))
 
     bridge = Bridge()
 

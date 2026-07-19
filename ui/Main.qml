@@ -23,6 +23,48 @@ ApplicationWindow {
     property int currentPage: 0
     readonly property bool showLog: bridge.applying || bridge.logText.length > 0
 
+    // header HUD chip data
+    readonly property int readinessPct: {
+        var ok = 0, total = 0
+        for (var k in bridge.status) {
+            var st = bridge.status[k].state
+            if (st === "unknown") continue
+            total++
+            if (st === "ok" || st === "info") ok++
+        }
+        return total === 0 ? -1 : Math.round(100 * ok / total)
+    }
+    // Discrete GPU first (nvidia > amd > intel). QVariantMap iterates keys
+    // alphabetically, so a plain for..in would show an AMD iGPU (gpu_amd)
+    // ahead of an NVIDIA dGPU (gpu_nvidia).
+    readonly property string gpuShort: {
+        var order = ["gpu_nvidia", "gpu_amd", "gpu_intel"]
+        for (var i = 0; i < order.length; i++) {
+            var s = bridge.status[order[i]]
+            if (s) {
+                var d = s.detail || ""
+                return d.split("—")[0].trim().split(" ").slice(0, 3).join(" ")
+            }
+        }
+        return ""
+    }
+    readonly property string kernelShort: {
+        for (var i = 0; i < bridge.kernels.length; i++)
+            if (bridge.kernels[i].running) return bridge.kernels[i].name
+        return ""
+    }
+
+    function readiness() {
+        var ok = 0, total = 0
+        for (var k in bridge.status) {
+            var st = bridge.status[k].state
+            if (st === "unknown") continue
+            total++
+            if (st === "ok" || st === "info") ok++
+        }
+        return total === 0 ? -1 : Math.round(100 * ok / total)
+    }
+
     readonly property var pageTitles: [
         "Overview", "Gaming Packages", "Launch Options", "Apps",
         "Kernel", "Maintenance", "Diagnose", "Restore", "Change Log"
@@ -39,6 +81,8 @@ ApplicationWindow {
         "A record of everything this tool changed"
     ]
 
+    Component.onCompleted: bridge.refreshKernels()
+
     ConfirmDialog {
         id: confirmDlg
         parent: Overlay.overlay
@@ -51,7 +95,7 @@ ApplicationWindow {
         // ================= Sidebar =================
         Rectangle {
             Layout.fillHeight: true
-            Layout.preferredWidth: 220
+            Layout.preferredWidth: 236
             color: Theme.surfaceAlt
 
             // hairline separating sidebar from content
@@ -59,7 +103,7 @@ ApplicationWindow {
                 anchors.right: parent.right
                 width: 1
                 height: parent.height
-                color: Theme.border
+                color: Theme.borderSubtle
             }
 
             ColumnLayout {
@@ -68,31 +112,33 @@ ApplicationWindow {
                 spacing: 2
 
                 RowLayout {
-                    Layout.bottomMargin: 16
+                    Layout.bottomMargin: 20
                     Layout.topMargin: 8
-                    Layout.leftMargin: 4
-                    spacing: 10
+                    Layout.leftMargin: 6
+                    spacing: 11
                     Image {
                         source: "resources/AkariMark.png"
-                        sourceSize.width: 26
-                        sourceSize.height: 26
-                        Layout.preferredWidth: 26
-                        Layout.preferredHeight: 26
+                        sourceSize.width: 30
+                        sourceSize.height: 30
+                        Layout.preferredWidth: 30
+                        Layout.preferredHeight: 30
                         fillMode: Image.PreserveAspectFit
                         smooth: true
                     }
                     ColumnLayout {
-                        spacing: 0
+                        spacing: 2
                         Label {
                             text: "AKARI"
-                            font.letterSpacing: 3
-                            font.pixelSize: 13
-                            font.bold: true
+                            font.family: Theme.hudFont
+                            font.letterSpacing: 4
+                            font.pixelSize: 16
+                            font.weight: Font.Bold
                             color: Theme.textPrimary
                         }
                         Label {
-                            text: "TOOL FOR ARCH"
-                            font.letterSpacing: 2
+                            text: "TOOL · FOR ARCH"
+                            font.family: Theme.monoFont
+                            font.letterSpacing: 2.5
                             font.pixelSize: 8
                             color: Theme.textFaint
                         }
@@ -154,11 +200,19 @@ ApplicationWindow {
 
                 Item { Layout.fillHeight: true }
 
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.topMargin: 8
+                    height: 1
+                    color: "#1A1A1E"
+                }
                 Label {
                     text: "v0.3 · bash backend"
+                    font.family: Theme.monoFont
                     font.pixelSize: Theme.fsMicro
                     color: Theme.textFaint
-                    Layout.bottomMargin: 4
+                    Layout.topMargin: 10
+                    Layout.bottomMargin: 2
                     Layout.leftMargin: 10
                 }
             }
@@ -170,46 +224,163 @@ ApplicationWindow {
             Layout.fillHeight: true
             spacing: 0
 
-            // ---- page header ----
-            RowLayout {
+            // ---- page header / top HUD strip ----
+            Rectangle {
                 Layout.fillWidth: true
-                Layout.leftMargin: Theme.pagePadding
-                Layout.rightMargin: Theme.pagePadding
-                Layout.topMargin: 14
-                Layout.bottomMargin: 10
-                spacing: 12
-
-                Rectangle {   // accent tick anchoring the title
-                    width: 3
-                    Layout.preferredHeight: 30
-                    radius: 1.5
-                    color: Theme.accent
+                implicitHeight: headerRow.implicitHeight + 32
+                color: "transparent"
+                Rectangle {
+                    anchors.bottom: parent.bottom
+                    width: parent.width; height: 1
+                    color: "#1A1A1E"
                 }
-                ColumnLayout {
-                    spacing: 1
-                    Label {
-                        id: pageTitle
-                        text: root.showLog ? "Running" : root.pageTitles[root.currentPage]
-                        font.pixelSize: Theme.fsTitle
-                        font.bold: true
-                        color: Theme.textPrimary
-                        opacity: 1
-                        Behavior on text {
-                            SequentialAnimation {
-                                NumberAnimation { target: pageTitle; property: "opacity"; to: 0; duration: 60 }
-                                PropertyAction {}
-                                NumberAnimation { target: pageTitle; property: "opacity"; to: 1; duration: Theme.animMed }
+                RowLayout {
+                    id: headerRow
+                    anchors.fill: parent
+                    anchors.leftMargin: Theme.pagePadding
+                    anchors.rightMargin: Theme.pagePadding
+                    anchors.topMargin: 18
+                    anchors.bottomMargin: 14
+                    spacing: 14
+
+                    Rectangle {   // accent tick
+                        Layout.preferredWidth: 3
+                        Layout.preferredHeight: 40
+                        radius: 2
+                        color: Theme.accent
+                    }
+                    ColumnLayout {
+                        spacing: 2
+                        Label {
+                            id: pageTitle
+                            text: root.showLog ? "Running" : root.pageTitles[root.currentPage]
+                            font.family: Theme.hudFont
+                            font.pixelSize: Theme.fsPageTitle
+                            font.weight: Font.Bold
+                            font.letterSpacing: 1
+                            color: Theme.textPrimary
+                            Behavior on text {
+                                SequentialAnimation {
+                                    NumberAnimation { target: pageTitle; property: "opacity"; to: 0; duration: 60 }
+                                    PropertyAction {}
+                                    NumberAnimation { target: pageTitle; property: "opacity"; to: 1; duration: Theme.animMed }
+                                }
+                            }
+                        }
+                        Label {
+                            text: root.showLog ? "Live output from the backend"
+                                               : root.pageSubtitles[root.currentPage]
+                            color: Theme.textSecondary
+                            font.family: Theme.bodyFont
+                            font.pixelSize: Theme.fsBody
+                        }
+                    }
+                    Item { Layout.fillWidth: true }
+
+                    // HUD chips: READY % · GPU · KERNEL
+                    RowLayout {
+                        spacing: 8
+                        Rectangle {   // READY chip
+                            implicitWidth: readyRow.implicitWidth + 24
+                            implicitHeight: 30
+                            radius: 7
+                            color: Theme.surface
+                            border.width: 1
+                            border.color: Theme.border
+                            RowLayout {
+                                id: readyRow
+                                anchors.centerIn: parent
+                                spacing: 7
+                                Item {
+                                    width: 7; height: 7
+                                    Rectangle {
+                                        anchors.centerIn: parent
+                                        width: 15; height: 15; radius: 7.5
+                                        color: Qt.alpha(bridge.running ? Theme.warn : Theme.ok, 0.25)
+                                    }
+                                    Rectangle {
+                                        anchors.centerIn: parent
+                                        width: 7; height: 7; radius: 3.5
+                                        color: bridge.running ? Theme.warn : Theme.ok
+                                        SequentialAnimation on opacity {
+                                            running: bridge.running
+                                            loops: Animation.Infinite
+                                            alwaysRunToEnd: true
+                                            NumberAnimation { to: 0.35; duration: 500 }
+                                            NumberAnimation { to: 1.0;  duration: 500 }
+                                        }
+                                    }
+                                }
+                                Label {
+                                    text: bridge.running ? "WORKING" : "READY"
+                                    font.family: Theme.monoFont
+                                    font.pixelSize: Theme.fsLabel
+                                    color: Theme.textSecondary
+                                }
+                                Label {
+                                    visible: root.readinessPct >= 0
+                                    text: root.readinessPct + "%"
+                                    font.family: Theme.monoFont
+                                    font.pixelSize: Theme.fsLabel
+                                    font.weight: Font.Bold
+                                    color: Theme.textPrimary
+                                }
+                            }
+                        }
+                        Rectangle {   // GPU chip
+                            visible: root.gpuShort.length > 0
+                            implicitWidth: gpuRow.implicitWidth + 24
+                            implicitHeight: 30
+                            radius: 7
+                            color: Theme.surface
+                            border.width: 1
+                            border.color: Theme.border
+                            RowLayout {
+                                id: gpuRow
+                                anchors.centerIn: parent
+                                spacing: 6
+                                Label {
+                                    text: "GPU"
+                                    font.family: Theme.monoFont
+                                    font.pixelSize: Theme.fsLabel
+                                    color: Theme.textSecondary
+                                }
+                                Label {
+                                    text: root.gpuShort
+                                    font.family: Theme.monoFont
+                                    font.pixelSize: Theme.fsLabel
+                                    color: Theme.textPrimary
+                                }
+                            }
+                        }
+                        Rectangle {   // KERNEL chip
+                            visible: root.kernelShort.length > 0
+                            implicitWidth: kRow.implicitWidth + 24
+                            implicitHeight: 30
+                            radius: 7
+                            color: Theme.surface
+                            border.width: 1
+                            border.color: Theme.border
+                            RowLayout {
+                                id: kRow
+                                anchors.centerIn: parent
+                                spacing: 6
+                                Label {
+                                    text: "KERNEL"
+                                    font.family: Theme.monoFont
+                                    font.pixelSize: Theme.fsLabel
+                                    color: Theme.textSecondary
+                                }
+                                Label {
+                                    text: root.kernelShort
+                                    font.family: Theme.monoFont
+                                    font.pixelSize: Theme.fsLabel
+                                    color: Theme.textPrimary
+                                }
                             }
                         }
                     }
-                    Label {
-                        text: root.showLog ? "Live output from the backend"
-                                           : root.pageSubtitles[root.currentPage]
-                        color: Theme.textSecondary
-                        font.pixelSize: Theme.fsCaption
-                    }
                 }
-                Item { Layout.fillWidth: true }
             }
 
             StackLayout {
@@ -232,47 +403,6 @@ ApplicationWindow {
                 }
             }
 
-            // ---- status footer ----
-            Rectangle {
-                Layout.fillWidth: true
-                height: 32
-                color: Theme.surfaceAlt
-                Rectangle {
-                    anchors.top: parent.top
-                    width: parent.width
-                    height: 1
-                    color: Theme.border
-                }
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 16
-                    anchors.rightMargin: 16
-                    spacing: 8
-                    Rectangle {
-                        id: statusDot
-                        width: 8; height: 8; radius: 4
-                        color: bridge.running ? Theme.warn : Theme.ok
-                        SequentialAnimation on opacity {
-                            running: bridge.running
-                            loops: Animation.Infinite
-                            alwaysRunToEnd: true
-                            NumberAnimation { to: 0.3; duration: 500; easing.type: Easing.InOutSine }
-                            NumberAnimation { to: 1.0; duration: 500; easing.type: Easing.InOutSine }
-                        }
-                    }
-                    Label {
-                        text: bridge.running ? "Working" : "Ready"
-                        font.pixelSize: 11
-                        color: Theme.textSecondary
-                    }
-                    Item { Layout.fillWidth: true }
-                    Label {
-                        text: "PySide6 · QML Material"
-                        font.pixelSize: 11
-                        color: Theme.textFaint
-                    }
-                }
-            }
         }
     }
 }

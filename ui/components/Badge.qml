@@ -10,7 +10,7 @@ Rectangle {
     radius: height / 2
     color: Qt.alpha(tint, 0.13)
     border.width: 1
-    border.color: Qt.alpha(tint, 0.28)
+    border.color: Qt.alpha(tint, 0.27)
     width: label.implicitWidth + 16
     height: 19
 
@@ -18,7 +18,8 @@ Rectangle {
         id: label
         anchors.centerIn: parent
         text: badge.text
-        font.pixelSize: 9
+        font.family: Theme.monoFont
+        font.pixelSize: Theme.fsBadge
         font.letterSpacing: 1.2
         font.bold: true
         color: badge.tint

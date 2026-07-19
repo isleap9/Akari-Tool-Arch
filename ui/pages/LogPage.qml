@@ -30,7 +30,7 @@ ColumnLayout {
             width: logFlick.width
             readOnly: true
             wrapMode: TextArea.Wrap
-            font.family: "monospace"
+            font.family: Theme.monoFont
             font.pixelSize: 12
             color: Theme.textSecondary
             text: bridge.logText

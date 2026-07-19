@@ -55,9 +55,19 @@ ColumnLayout {
             Behavior on border.color { ColorAnimation { duration: Theme.animFast } }
             HoverHandler { id: rowHover }
 
-            Column {
+            Label {
+                id: restoreIcon
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.left: parent.left
+                anchors.leftMargin: 18
+                text: "\u21BA"
+                font.family: Theme.monoFont
+                font.pixelSize: Theme.fsTitle
+                color: Theme.info
+            }
+            Column {
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.left: restoreIcon.right
                 anchors.leftMargin: 16
                 anchors.right: restoreBtn.left
                 anchors.rightMargin: 16
@@ -79,16 +89,14 @@ ColumnLayout {
                 }
             }
 
-            Button {
+            OutlineActionButton {
                 id: restoreBtn
                 visible: !isInfo
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.right: parent.right
                 anchors.rightMargin: 16
-                text: "Restore"
-                flat: true
-                implicitHeight: 36
-                Material.foreground: Theme.warn
+                text: "RESTORE"
+                tint: Theme.warn
                 enabled: !bridge.running
                 onClicked: page.confirmDialog.openWith(
                     "Restore " + modelData.original,

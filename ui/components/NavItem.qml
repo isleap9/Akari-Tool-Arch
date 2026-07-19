@@ -35,6 +35,7 @@ ItemDelegate {
             width: 18
             horizontalAlignment: Text.AlignHCenter
             text: nav.glyph
+            font.family: Theme.monoFont
             font.pixelSize: 13
             color: nav.selected ? Theme.accent : Theme.textMuted
             Behavior on color { ColorAnimation { duration: Theme.animFast } }
@@ -46,7 +47,9 @@ ItemDelegate {
             text: nav.label
             color: nav.selected ? Theme.textPrimary
                  : nav.hovered  ? Theme.textSecondary : Theme.textMuted
+            font.family: Theme.bodyFont
             font.pixelSize: Theme.fsBody
+            font.weight: nav.selected ? Font.DemiBold : Font.Medium
             Behavior on color { ColorAnimation { duration: Theme.animFast } }
         }
     }

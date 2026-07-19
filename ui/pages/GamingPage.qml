@@ -74,25 +74,63 @@ ColumnLayout {
         Layout.bottomMargin: 10
         spacing: 12
 
-        Label {
-            text: bridge.packages.length === 0 ? "Loading package list…"
-                : page.missingCount === 0     ? "Everything installed — " + bridge.packages.length + " packages present"
-                : page.missingCount + " of " + bridge.packages.length + " packages missing"
-            color: Theme.textSecondary
-            font.pixelSize: 13
+        ColumnLayout {
+            spacing: 6
+            Layout.fillWidth: true
+            RowLayout {
+                spacing: 10
+                Label {
+                    text: bridge.packages.length === 0 ? "Loading package list…"
+                        : (bridge.packages.length - page.missingCount) + " of "
+                          + bridge.packages.length + " packages present"
+                    color: Theme.textPrimary
+                    font.family: Theme.bodyFont
+                    font.weight: Font.DemiBold
+                    font.pixelSize: Theme.fsHeading
+                }
+                Label {
+                    visible: page.missingCount > 0
+                    text: page.missingCount + " missing"
+                    color: Theme.warn
+                    font.family: Theme.monoFont
+                    font.pixelSize: Theme.fsLabel
+                }
+            }
+            Rectangle {   // install-progress track
+                Layout.fillWidth: true
+                Layout.maximumWidth: 420
+                height: 8
+                radius: 4
+                color: Theme.surfaceAlt
+                Rectangle {
+                    height: parent.height
+                    radius: 4
+                    width: bridge.packages.length === 0 ? 0
+                         : parent.width * (bridge.packages.length - page.missingCount)
+                                        / bridge.packages.length
+                    gradient: Gradient {
+                        orientation: Gradient.Horizontal
+                        GradientStop { position: 0.0; color: Theme.accentDim }
+                        GradientStop { position: 1.0; color: Theme.accent }
+                    }
+                    Behavior on width { NumberAnimation { duration: Theme.animMed } }
+                }
+            }
         }
         Item { Layout.fillWidth: true }
-        Button {
-            text: "Refresh"
-            flat: true
+        GhostButton {
+            text: "REFRESH"
+            implicitHeight: 36
+            font.pixelSize: Theme.fsBody
             enabled: !bridge.running
             onClicked: bridge.refreshPackages()
         }
-        Button {
+        PrimaryButton {
             text: page.selectedCount > 0
-                  ? "Install selected (" + page.selectedCount + ")"
-                  : "Nothing selected"
-            highlighted: true
+                  ? "INSTALL SELECTED (" + page.selectedCount + ")"
+                  : "NOTHING SELECTED"
+            implicitHeight: 36
+            font.pixelSize: Theme.fsBody
             enabled: !bridge.running && page.selectedCount > 0
             onClicked: {
                 var names = page.selectedNames()
@@ -123,10 +161,11 @@ ColumnLayout {
         section.criteria: ViewSection.FullString
         section.delegate: Label {
             required property string section
-            text: page.groupNames[section] || section
-            font.pixelSize: 11
-            font.letterSpacing: 1.2
-            font.bold: true
+            text: (page.groupNames[section] || section).toUpperCase()
+            font.family: Theme.hudFont
+            font.pixelSize: Theme.fsCaption
+            font.letterSpacing: 1.5
+            font.weight: Font.Bold
             color: Theme.textMuted
             topPadding: 16
             bottomPadding: 6
@@ -135,7 +174,7 @@ ColumnLayout {
         delegate: Rectangle {
             required property var modelData
             width: list.width
-            height: 42
+            height: 44
             radius: Theme.rowRadius
             color: hoverArea.hovered ? Theme.surfaceHover : Theme.surface
             border.width: 1
@@ -161,7 +200,7 @@ ColumnLayout {
                 }
                 Label {
                     text: modelData.name
-                    font.family: "monospace"
+                    font.family: Theme.monoFont
                     font.pixelSize: 13
                     color: modelData.installed ? Theme.textMuted : Theme.textPrimary
                 }

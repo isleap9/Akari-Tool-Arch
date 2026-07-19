@@ -37,18 +37,47 @@ check_multilib() {
 }
 
 detect_gpu() {
-  # VGA/3D/Display controllers
+  # VGA/3D/Display controllers, matched by PCI *vendor ID* — never by name.
+  # (Name matching is a trap: "VGA compatible" contains "ati", so every GPU
+  # on every system used to be detected as AMD as well.)
+  #   10de = NVIDIA, 1002 = AMD/ATI, 8086 = Intel
   local pci vendors=""
-  pci=$(lspci -nn 2>/dev/null | grep -Ei 'vga|3d|display' || true)
-  grep -qi 'nvidia'            <<<"$pci" && vendors+="nvidia "
-  grep -qiE 'amd|ati|radeon'   <<<"$pci" && vendors+="amd "
-  grep -qi 'intel'             <<<"$pci" && vendors+="intel "
+  pci=$(lspci -nn 2>/dev/null | grep -Ei 'vga|3d controller|display controller' || true)
+  grep -q '\[10de:' <<<"$pci" && vendors+="nvidia "
+  grep -q '\[1002:' <<<"$pci" && vendors+="amd "
+  grep -q '\[8086:' <<<"$pci" && vendors+="intel "
   echo "${vendors:-unknown}"
+}
+
+# Best-effort human GPU model for a vendor, from its lspci line.
+# "…NVIDIA Corporation GB205 [GeForce RTX 5070]…" -> "GeForce RTX 5070"
+gpu_model() {
+  local vendor=$1 line model="" id=""
+  case $vendor in
+    nvidia) id="10de" ;;
+    amd)    id="1002" ;;
+    intel)  id="8086" ;;
+  esac
+  line=$(lspci -nn 2>/dev/null | grep -Ei 'vga|3d controller|display controller' \
+         | grep "\[$id:" | head -1)
+  # prefer a bracketed marketing name (GeForce/RTX/Radeon/Arc/Iris/UHD…)
+  model=$(grep -oE '\[(GeForce|RTX|GTX|Radeon|Arc|Iris|UHD)[^]]*\]' <<<"$line" \
+          | head -1 | tr -d '[]')
+  # fallback: device description after "controller:", minus vendor boilerplate
+  [[ -z "$model" ]] && model=$(sed -E \
+      's/.*(controller|Display)[^:]*: //I;
+       s/ \(rev.*//;
+       s/\[[0-9a-f]{4}:[0-9a-f]{4}\]//g;
+       s/(NVIDIA Corporation|Advanced Micro Devices, Inc\.|Intel Corporation) *//g;
+       s/\[(AMD\/ATI|AMD|ATI)\] *//g;
+       s/^ +| +$//g' <<<"$line")
+  model=$(sed -E 's/^ +| +$//g' <<<"$model")
+  echo "${model:-$vendor}"
 }
 
 check_gpu() {
   local vendors; vendors=$(detect_gpu)
-  local v missing
+  local v missing model
   if [[ "$vendors" == "unknown" ]]; then
     emit gpu warn "Could not detect GPU vendor"
     return
@@ -60,12 +89,45 @@ check_gpu() {
       nvidia) local npkgs; mapfile -t npkgs < <(nvidia_pkgs)
               missing=$(missing_from "${npkgs[@]}") ;;
     esac
+    model=$(gpu_model "$v")
     if [[ -z "$missing" ]]; then
-      emit "gpu_$v" ok "$v drivers installed"
+      emit "gpu_$v" ok "$model — $v drivers installed"
     else
-      emit "gpu_$v" warn "$v drivers incomplete: $(echo $missing | tr '\n' ' ')"
+      emit "gpu_$v" warn "$model — $v drivers incomplete: $(echo $missing | tr '\n' ' ')"
     fi
   done
+}
+
+check_cpu() {
+  local model cores
+  model=$(grep -m1 '^model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2- \
+          | sed -E 's/^ +//; s/\((R|TM|C)\)//gI; s/ CPU//; s/ +@.*//; s/ +/ /g')
+  [[ -z "$model" ]] && model=$(lscpu 2>/dev/null | grep -m1 'Model name' \
+          | cut -d: -f2- | sed -E 's/^ +//')
+  cores=$(nproc 2>/dev/null || echo "?")
+  if [[ -n "$model" ]]; then
+    emit cpu ok "$model — ${cores} threads"
+  else
+    emit cpu warn "Could not detect CPU model"
+  fi
+}
+
+check_ram() {
+  # Total + currently available, from /proc/meminfo (no root needed)
+  local total_kb avail_kb total_gib avail_gib
+  total_kb=$(grep -m1 '^MemTotal:'     /proc/meminfo 2>/dev/null | awk '{print $2}')
+  avail_kb=$(grep -m1 '^MemAvailable:' /proc/meminfo 2>/dev/null | awk '{print $2}')
+  if [[ -z "$total_kb" ]]; then
+    emit ram warn "Could not read memory info"
+    return
+  fi
+  total_gib=$(awk "BEGIN { printf \"%.0f\", $total_kb / 1048576 }")
+  if [[ -n "$avail_kb" ]]; then
+    avail_gib=$(awk "BEGIN { printf \"%.1f\", $avail_kb / 1048576 }")
+    emit ram ok "${total_gib} GiB — ${avail_gib} GiB free"
+  else
+    emit ram ok "${total_gib} GiB"
+  fi
 }
 
 check_gaming() {
@@ -194,6 +256,8 @@ cmd_check() {
   check_root
   check_network
   check_multilib
+  check_cpu
+  check_ram
   check_gpu
   check_gaming
   check_proton

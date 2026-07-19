@@ -1,238 +1,331 @@
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Controls.Material
 import QtQuick.Layouts
 import components
 
+// Launch Options — mock layout: 2-col [1.35fr | 1fr]
+//   left:  LAUNCH STRING card (gradient) + toggle card
+//   right: APPLY TO A STEAM GAME card with per-game rows
 Flickable {
     id: page
-    contentHeight: col.height + 56
+    contentHeight: grid.height + 56
     clip: true
 
     property var confirmDialog: null
 
     Component.onCompleted: bridge.refreshSteamGames()
 
-    ColumnLayout {
-        id: col
+    GridLayout {
+        id: grid
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.margins: Theme.pagePadding
-        anchors.topMargin: 8
-        spacing: 14
+        anchors.topMargin: 4
+        columns: width > 680 ? 2 : 1
+        columnSpacing: 16
+        rowSpacing: 16
 
-        Label {
+        // ================= LEFT COLUMN =================
+        ColumnLayout {
             Layout.fillWidth: true
-            text: "Compose a launch options string for a game, then paste it in " +
-                  "Steam: right-click a game → Properties → Launch Options."
-            color: Theme.textSecondary
-            font.pixelSize: 12
-            wrapMode: Text.Wrap
-        }
+            Layout.preferredWidth: 135   // 1.35fr
+            Layout.alignment: Qt.AlignTop
+            spacing: 14
 
-        // ---- result ------------------------------------------------------
-        Pane {
-            Layout.fillWidth: true
-            Material.elevation: 0
-            Material.background: Theme.surfaceLog
-            padding: 14
-            background: Rectangle {
-                color: Theme.surfaceLog
+            // ---- launch string card ----
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: stringCol.implicitHeight + 36
                 radius: Theme.cardRadius
-                border.width: 1
-                border.color: Theme.border
-            }
-
-            contentItem: RowLayout {
-                spacing: 12
-                TextArea {
-                    id: result
-                    Layout.fillWidth: true
-                    readOnly: true
-                    wrapMode: TextArea.Wrap
-                    font.family: "monospace"
-                    font.pixelSize: 13
-                    color: Theme.textPrimary
-                    background: null
-                    text: page.buildString()
-                }
-                Button {
-                    text: "Copy"
-                    highlighted: true
-                    Material.elevation: 0
-                    implicitHeight: 36
-                    onClicked: {
-                        result.selectAll()
-                        result.copy()
-                        result.deselect()
-                        text = "Copied!"
-                        copyReset.restart()
-                    }
-                    Timer {
-                        id: copyReset
-                        interval: 1500
-                        onTriggered: parent.text = "Copy"
-                    }
-                }
-            }
-        }
-
-        // ---- toggles -----------------------------------------------------
-        Pane {
-            Layout.fillWidth: true
-            Material.elevation: 0
-            Material.background: Theme.surface
-            padding: 16
-            background: Rectangle {
                 color: Theme.surface
-                radius: Theme.cardRadius
                 border.width: 1
                 border.color: Theme.border
-            }
 
-            contentItem: ColumnLayout {
-                spacing: 2
+                ColumnLayout {
+                    id: stringCol
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 18
+                    anchors.leftMargin: 20
+                    anchors.rightMargin: 20
+                    spacing: 10
 
-                Switch {
-                    id: swGamemode
-                    text: "GameMode — CPU governor & priority while playing"
-                    checked: true
-                }
-                Switch {
-                    id: swMangohud
-                    text: "MangoHud — FPS / frametime overlay"
-                    checked: true
-                }
-                Switch {
-                    id: swWayland
-                    text: "Proton Wayland — native Wayland (better for Hyprland, experimental)"
-                }
-                Switch {
-                    id: swGamescope
-                    text: "Gamescope — run in a micro-compositor session"
-                }
-
-                // gamescope sub-options
-                GridLayout {
-                    visible: swGamescope.checked
-                    columns: 2
-                    columnSpacing: 12
-                    Layout.leftMargin: 52
-                    Layout.topMargin: 4
-
-                    Label { text: "Resolution"; color: Theme.textSecondary; font.pixelSize: 12 }
+                    Label {
+                        text: "LAUNCH STRING"
+                        font.family: Theme.hudFont
+                        font.pixelSize: Theme.fsLabel
+                        font.weight: Font.Bold
+                        font.letterSpacing: Theme.hudLetterSpacing
+                        color: Theme.accent
+                    }
                     RowLayout {
-                        TextField {
-                            id: gsW; placeholderText: "2560"; text: "2560"
-                            validator: IntValidator { bottom: 1 }
-                            Layout.preferredWidth: 84
+                        spacing: 12
+                        Layout.fillWidth: true
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: result.implicitHeight + 24
+                            radius: Theme.rowRadius
+                            color: Theme.surfaceAlt
+                            border.width: 1
+                            border.color: Theme.border
+                            TextEdit {
+                                id: result
+                                anchors.fill: parent
+                                anchors.margins: 12
+                                anchors.leftMargin: 14
+                                anchors.rightMargin: 14
+                                readOnly: true
+                                wrapMode: TextEdit.WrapAnywhere
+                                font.family: Theme.monoFont
+                                font.pixelSize: Theme.fsBody
+                                color: Theme.textPrimary
+                                selectByMouse: true
+                                text: page.buildString()
+                            }
                         }
-                        Label { text: "×"; color: Theme.textSecondary }
-                        TextField {
-                            id: gsH; placeholderText: "1440"; text: "1440"
-                            validator: IntValidator { bottom: 1 }
-                            Layout.preferredWidth: 84
+                        PrimaryButton {
+                            id: copyBtn
+                            text: "COPY"
+                            onClicked: {
+                                result.selectAll()
+                                result.copy()
+                                result.deselect()
+                                text = "COPIED!"
+                                copyReset.restart()
+                            }
+                            Timer {
+                                id: copyReset
+                                interval: 1500
+                                onTriggered: copyBtn.text = "COPY"
+                            }
                         }
                     }
-                    Label { text: "FPS limit"; color: Theme.textSecondary; font.pixelSize: 12 }
-                    TextField {
-                        id: gsFps; placeholderText: "e.g. 144"
-                        validator: IntValidator { bottom: 1 }
-                        Layout.preferredWidth: 84
+                    Label {
+                        text: "Steam → right-click game → Properties → Launch Options"
+                        font.family: Theme.monoFont
+                        font.pixelSize: Theme.fsMicro
+                        color: Theme.textMuted
                     }
-                    Label { text: "Fullscreen"; color: Theme.textSecondary; font.pixelSize: 12 }
-                    CheckBox { id: gsFull; checked: true }
                 }
             }
-        }
 
-        // ---- apply directly to a Steam game ------------------------------
-        Pane {
-            Layout.fillWidth: true
-            Material.elevation: 0
-            Material.background: Theme.surface
-            padding: 16
-            background: Rectangle {
-                color: Theme.surface
+            // ---- toggles card ----
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: togglesCol.implicitHeight + 16
                 radius: Theme.cardRadius
+                color: Theme.surface
                 border.width: 1
                 border.color: Theme.border
-            }
 
-            contentItem: ColumnLayout {
-                spacing: 10
+                ColumnLayout {
+                    id: togglesCol
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 8
+                    anchors.leftMargin: 6
+                    anchors.rightMargin: 6
+                    spacing: 0
 
-                Label {
-                    text: "Apply to a Steam game"
-                    color: Theme.textPrimary
-                    font.pixelSize: 14
-                    font.bold: true
-                }
-                Label {
-                    Layout.fillWidth: true
-                    visible: bridge.steamGames.length === 0
-                    text: "No Steam library found (or Steam isn't set up yet). " +
-                          "You can still copy the string above and paste it manually."
-                    color: Theme.textMuted
-                    font.pixelSize: 12
-                    wrapMode: Text.Wrap
-                }
-
-                RowLayout {
-                    visible: bridge.steamGames.length > 0
-                    spacing: 12
-                    Layout.fillWidth: true
-
-                    ComboBox {
-                        id: gamePicker
+                    HudSwitch {
+                        id: swGamemode
                         Layout.fillWidth: true
-                        model: bridge.steamGames
-                        textRole: "name"
+                        padding: 14
+                        title: "GameMode"
+                        description: "CPU governor & priority while playing"
+                        checked: true
                     }
-                    Button {
-                        text: "Apply"
-                        highlighted: true
-                        Material.elevation: 0
-                        enabled: gamePicker.currentIndex >= 0 && !bridge.running
-                        onClicked: {
-                            var game = bridge.steamGames[gamePicker.currentIndex]
-                            var opts = page.buildString()
-                            page.confirmDialog.openWithText(
-                                "Set launch options — " + game.name,
-                                "Steam must be closed (it overwrites this file on exit).\n\n" +
-                                "New launch options:\n  " + opts +
-                                (game.launchOptions.length > 0
-                                    ? "\n\nReplaces current:\n  " + game.launchOptions
-                                    : "\n\n(no launch options currently set)") +
-                                "\n\nA backup of localconfig.vdf is kept and " +
-                                "listed under Restore.",
-                                function() { bridge.applyLaunchOptions(game.appid, opts) })
+                    HudSwitch {
+                        id: swMangohud
+                        Layout.fillWidth: true
+                        padding: 14
+                        title: "MangoHud"
+                        description: "FPS / frametime overlay"
+                        checked: true
+                    }
+                    HudSwitch {
+                        id: swWayland
+                        Layout.fillWidth: true
+                        padding: 14
+                        title: "Proton Wayland"
+                        description: "Native Wayland — better for Hyprland, experimental"
+                    }
+                    HudSwitch {
+                        id: swGamescope
+                        Layout.fillWidth: true
+                        padding: 14
+                        title: "Gamescope"
+                        description: "Run in a micro-compositor session"
+                    }
+
+                    // gamescope sub-options
+                    GridLayout {
+                        visible: swGamescope.checked
+                        columns: 2
+                        columnSpacing: 12
+                        rowSpacing: 8
+                        Layout.leftMargin: 68
+                        Layout.bottomMargin: 12
+
+                        Label {
+                            text: "Resolution"
+                            color: Theme.textSecondary
+                            font.family: Theme.bodyFont
+                            font.pixelSize: Theme.fsCaption
                         }
+                        RowLayout {
+                            TextField {
+                                id: gsW; placeholderText: "2560"; text: "2560"
+                                font.family: Theme.monoFont
+                                validator: IntValidator { bottom: 1 }
+                                Layout.preferredWidth: 84
+                            }
+                            Label { text: "×"; color: Theme.textSecondary }
+                            TextField {
+                                id: gsH; placeholderText: "1440"; text: "1440"
+                                font.family: Theme.monoFont
+                                validator: IntValidator { bottom: 1 }
+                                Layout.preferredWidth: 84
+                            }
+                        }
+                        Label {
+                            text: "FPS limit"
+                            color: Theme.textSecondary
+                            font.family: Theme.bodyFont
+                            font.pixelSize: Theme.fsCaption
+                        }
+                        TextField {
+                            id: gsFps; placeholderText: "e.g. 144"
+                            font.family: Theme.monoFont
+                            validator: IntValidator { bottom: 1 }
+                            Layout.preferredWidth: 84
+                        }
+                        Label {
+                            text: "Fullscreen"
+                            color: Theme.textSecondary
+                            font.family: Theme.bodyFont
+                            font.pixelSize: Theme.fsCaption
+                        }
+                        CheckBox { id: gsFull; checked: true }
                     }
-                }
-                Label {
-                    visible: bridge.steamGames.length > 0 && gamePicker.currentIndex >= 0
-                             && bridge.steamGames[gamePicker.currentIndex].launchOptions.length > 0
-                    Layout.fillWidth: true
-                    text: "Current: " + (gamePicker.currentIndex >= 0
-                              ? bridge.steamGames[gamePicker.currentIndex].launchOptions : "")
-                    color: Theme.textMuted
-                    font.family: "monospace"
-                    font.pixelSize: 11
-                    wrapMode: Text.Wrap
                 }
             }
         }
 
-        Label {
+        // ================= RIGHT COLUMN =================
+        Rectangle {
             Layout.fillWidth: true
-            text: "Order matters: environment variables first, wrappers next, " +
-                  "%command% is the game itself. Lutris/Heroic have equivalent " +
-                  "fields per game."
-            color: Theme.textMuted
-            font.pixelSize: 11
-            wrapMode: Text.Wrap
+            Layout.preferredWidth: 100   // 1fr
+            Layout.alignment: Qt.AlignTop
+            Layout.preferredHeight: gamesCol.implicitHeight + 36
+            radius: Theme.cardRadius
+            color: Theme.surface
+            border.width: 1
+            border.color: Theme.border
+
+            ColumnLayout {
+                id: gamesCol
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 18
+                anchors.leftMargin: 20
+                anchors.rightMargin: 20
+                spacing: 8
+
+                Label {
+                    text: "APPLY TO A STEAM GAME"
+                    font.family: Theme.hudFont
+                    font.pixelSize: Theme.fsLabel
+                    font.weight: Font.Bold
+                    font.letterSpacing: Theme.hudLetterSpacing
+                    color: Theme.textMuted
+                    Layout.bottomMargin: 6
+                }
+                Label {
+                    visible: bridge.steamGames.length === 0
+                    Layout.fillWidth: true
+                    text: "No Steam library found (or Steam isn't set up yet). You can still copy the string and paste it manually."
+                    color: Theme.textMuted
+                    font.family: Theme.bodyFont
+                    font.pixelSize: Theme.fsCaption
+                    wrapMode: Text.Wrap
+                }
+                Repeater {
+                    model: bridge.steamGames
+                    Rectangle {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 56
+                        radius: Theme.rowRadius
+                        color: gameHover.hovered ? Theme.surfaceHover : "transparent"
+                        border.width: 1
+                        border.color: gameHover.hovered ? Theme.borderHover : Theme.border
+                        Behavior on border.color { ColorAnimation { duration: Theme.animFast } }
+                        HoverHandler { id: gameHover }
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 14
+                            anchors.rightMargin: 12
+                            spacing: 10
+
+                            ColumnLayout {
+                                spacing: 3
+                                Layout.fillWidth: true
+                                Label {
+                                    text: modelData.name
+                                    font.family: Theme.bodyFont
+                                    font.pixelSize: 14
+                                    font.weight: Font.Medium
+                                    color: Theme.textPrimary
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                                Label {
+                                    text: modelData.launchOptions.length > 0
+                                          ? modelData.launchOptions : "no launch options set"
+                                    font.family: Theme.monoFont
+                                    font.pixelSize: Theme.fsMicro
+                                    color: Theme.textMuted
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                            }
+                            OutlineActionButton {
+                                text: "APPLY"
+                                enabled: !bridge.running
+                                onClicked: {
+                                    var game = modelData
+                                    var opts = page.buildString()
+                                    page.confirmDialog.openWithText(
+                                        "Set launch options — " + game.name,
+                                        "Steam must be closed (it overwrites this file on exit).\n\n" +
+                                        "New launch options:\n  " + opts +
+                                        (game.launchOptions.length > 0
+                                            ? "\n\nReplaces current:\n  " + game.launchOptions
+                                            : "\n\n(no launch options currently set)") +
+                                        "\n\nA backup of localconfig.vdf is kept and " +
+                                        "listed under Restore.",
+                                        function() { bridge.applyLaunchOptions(game.appid, opts) })
+                                }
+                            }
+                        }
+                    }
+                }
+                Label {
+                    Layout.fillWidth: true
+                    Layout.topMargin: 6
+                    text: "Steam must be closed — it overwrites this file on exit. A backup is kept under Restore."
+                    font.family: Theme.monoFont
+                    font.pixelSize: Theme.fsMicro
+                    color: Theme.textFaint
+                    wrapMode: Text.Wrap
+                }
+            }
         }
     }
 

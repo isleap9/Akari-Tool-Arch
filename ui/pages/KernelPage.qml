@@ -37,7 +37,7 @@ ColumnLayout {
         delegate: Rectangle {
             required property var modelData
             width: list.width
-            height: 72
+            height: 76
             radius: Theme.cardRadius
             color: rowHover.hovered ? Theme.surfaceHover : Theme.surface
             border.width: 1
@@ -60,9 +60,9 @@ ColumnLayout {
                     spacing: 8
                     Label {
                         text: modelData.name
-                        font.family: "monospace"
-                        font.pixelSize: 14
-                        font.bold: true
+                        font.family: Theme.monoFont
+                        font.pixelSize: Theme.fsHeading
+                        font.weight: Font.Bold
                     }
                     Badge {
                         visible: modelData.running
@@ -86,7 +86,8 @@ ColumnLayout {
                 Label {
                     text: modelData.description
                     color: Theme.textSecondary
-                    font.pixelSize: 12
+                    font.family: Theme.bodyFont
+                    font.pixelSize: Theme.fsCaption
                     elide: Text.ElideRight
                     width: parent.width
                 }
@@ -102,14 +103,11 @@ ColumnLayout {
                 height: parent.height
 
                 // Not installed -> Install
-                Button {
+                OutlineActionButton {
                     visible: !modelData.installed
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.right: parent.right
-                    text: "Install"
-                    highlighted: true
-                    implicitHeight: 36
-                    Material.elevation: 0
+                    text: "INSTALL"
                     enabled: !bridge.running
                     onClicked: {
                         var name = modelData.name
@@ -128,15 +126,13 @@ ColumnLayout {
                 }
 
                 // Installed, not running, not stock -> Uninstall
-                Button {
+                OutlineActionButton {
                     visible: modelData.installed && !modelData.running
                              && modelData.name !== "linux"
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.right: parent.right
-                    text: "Uninstall"
-                    flat: true
-                    implicitHeight: 36
-                    Material.foreground: Theme.fail
+                    text: "UNINSTALL"
+                    tint: Theme.warn
                     enabled: !bridge.running
                     onClicked: page.confirmDialog.openWith(
                         "Remove " + modelData.name,
@@ -149,8 +145,19 @@ ColumnLayout {
                     visible: modelData.installed && !modelData.running
                              && modelData.name === "linux"
                     anchors.centerIn: parent
-                    text: "installed"
-                    font.pixelSize: 11
+                    text: "INSTALLED"
+                    font.family: Theme.monoFont
+                    font.pixelSize: Theme.fsMicro
+                    font.letterSpacing: 1
+                    color: Theme.ok
+                }
+                Label {
+                    visible: modelData.running
+                    anchors.centerIn: parent
+                    text: "IN USE"
+                    font.family: Theme.monoFont
+                    font.pixelSize: Theme.fsMicro
+                    font.letterSpacing: 1
                     color: Theme.ok
                 }
             }
