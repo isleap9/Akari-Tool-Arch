@@ -58,14 +58,30 @@ ColumnLayout {
                 }
                 TextField {
                     id: search
+                    objectName: "searchField"
                     Layout.fillWidth: true
-                    placeholderText: "Search installed apps…"
+                    // No placeholderText: the Material style animates it into a
+                    // floating label above the field, which escapes this custom
+                    // bordered wrapper. Use a plain static hint instead.
                     font.family: Theme.monoFont
                     font.pixelSize: Theme.fsBody
                     color: Theme.textPrimary
-                    placeholderTextColor: Theme.textMuted
                     background: null
+                    topPadding: 0
+                    bottomPadding: 0
+                    leftPadding: 0
+                    rightPadding: 0
+                    verticalAlignment: TextInput.AlignVCenter
                     onTextChanged: page.filter = text
+
+                    Label {
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: search.text.length === 0
+                        text: "Search installed apps…"
+                        font: search.font
+                        color: Theme.textMuted
+                    }
                 }
             }
         }
