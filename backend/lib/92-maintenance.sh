@@ -32,8 +32,12 @@ plan_paru() {
   else
     echo "Will do:"
     echo "  1. pacman -S --needed base-devel git   (build prerequisites)"
-    echo "  2. git clone https://aur.archlinux.org/paru-bin.git (as $RUN_USER)"
+    echo "  2. git clone https://aur.archlinux.org/paru.git (as $RUN_USER)"
     echo "  3. makepkg -si                          (build + install as $RUN_USER)"
+    echo ""
+    echo "Built from source rather than paru-bin: the -bin package ships a"
+    echo "prebuilt binary that stops working whenever pacman bumps libalpm's"
+    echo "ABI. Building takes a few minutes longer and cannot drift."
   fi
 }
 
@@ -45,9 +49,9 @@ apply_paru() {
   run_root pacman -S --needed --noconfirm base-devel git
 
   local bdir="$RUN_HOME/.cache/akari-paru-build"
-  echo ":: Building paru-bin from the AUR (as $RUN_USER)"
+  echo ":: Building paru from the AUR (as $RUN_USER) — this takes a few minutes"
   run_user rm -rf "$bdir"
-  run_user git clone --depth 1 https://aur.archlinux.org/paru-bin.git "$bdir"
+  run_user git clone --depth 1 https://aur.archlinux.org/paru.git "$bdir"
 
   # makepkg refuses root and needs pacman rights for -si; reuse the same
   # temporary scoped sudoers rule as run_aur when we're the GUI's root.
@@ -62,7 +66,12 @@ apply_paru() {
     ( cd "$bdir" && makepkg -si --noconfirm )
   fi
   run_user rm -rf "$bdir"
-  log_change "installed paru (AUR helper) via paru-bin"
+  if ! run_user paru --version >/dev/null 2>&1; then
+    echo ":: paru was installed but will not start — remove it with"
+    echo "   'sudo pacman -Rns paru' and report this."
+    return 1
+  fi
+  log_change "installed paru (AUR helper), built from source"
   echo ":: paru installed. AUR packages are now available in Akari."
 }
 

@@ -477,7 +477,7 @@ CHROOT
   # multilib early: the gaming hand-off needs it, and it costs nothing.
   cat >> "$out" <<'CHROOT'
 sed -i '/^#\[multilib\]/,/^#Include = \/etc\/pacman.d\/mirrorlist/ s/^#//' /etc/pacman.conf
-pacman -Sy --noconfirm
+pacman -Syu --noconfirm
 CHROOT
 
   # bootloader
@@ -526,10 +526,15 @@ CHROOT
 echo "$USERNAME ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/99-akari-build
 chmod 0440 /etc/sudoers.d/99-akari-build
 runuser -u "$USERNAME" -- bash -c '
-  cd /tmp && rm -rf paru-bin &&
-  git clone --depth 1 https://aur.archlinux.org/paru-bin.git &&
-  cd paru-bin && makepkg -si --noconfirm' \
-  || echo "!! paru build failed — install it later with the AUR helper step in akari-tui"
+  cd /tmp && rm -rf paru &&
+  git clone --depth 1 https://aur.archlinux.org/paru.git &&
+  cd paru && makepkg -si --noconfirm' \
+  || echo "!! paru build failed — install it later from akari-tui"
+# A paru that cannot start is worse than no paru: say so now, in the log,
+# rather than letting the user discover it on first boot.
+if ! runuser -u "$USERNAME" -- paru --version >/dev/null 2>&1; then
+  echo "!! paru was installed but does not run — remove it with 'pacman -Rns paru'"
+fi
 rm -f /etc/sudoers.d/99-akari-build
 CHROOT
   fi
