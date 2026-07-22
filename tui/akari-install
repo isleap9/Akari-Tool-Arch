@@ -1,0 +1,396 @@
+#!/usr/bin/env bash
+#
+# akari-install — the Arch installation wizard.
+#
+# A frontend only: every decision it collects goes into a config file, and
+# backend/akari-install.sh does the work. Nothing here touches a disk.
+#
+set -uo pipefail
+
+find_engine() {
+  local here c
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  for c in \
+    "$here/../backend/akari-install.sh" \
+    "/usr/share/akari-tool/backend/akari-install.sh"
+  do
+    [[ -r $c ]] && { printf '%s\n' "$c"; return 0; }
+  done
+  return 1
+}
+
+ENGINE="$(find_engine)" || { echo "akari-install: cannot find backend/akari-install.sh" >&2; exit 1; }
+
+UI_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/ui.sh"
+[[ -r $UI_LIB ]] || { echo "akari-install: missing $UI_LIB" >&2; exit 1; }
+# shellcheck source=/dev/null
+source "$UI_LIB"
+
+CONF=/tmp/akari-install.conf
+RESULT=()
+engine() {
+  RESULT=()
+  local line
+  while IFS= read -r line; do RESULT+=("$line"); done < <(bash "$ENGINE" "$@" 2>/dev/null)
+  return 0
+}
+
+# ---------------------------------------------------------------- answers
+
+DISK=""; DISK_LABEL=""
+FS=btrfs; SWAP=zram; BOOTLOADER=""; KERNEL=linux-zen
+HOSTNAME_V=akari; USERNAME_V=""; USERPASS=""; ROOTPASS=""
+TIMEZONE=UTC; LOCALE=en_US.UTF-8; KEYMAP=us; DESKTOP=none
+GAMING=0; AURHELPER=none
+UEFI=0
+
+# ---------------------------------------------------------------- steps
+# Every step returns: 0 forward, 1 back, 2 quit.
+
+step_env() {
+ while :; do
+  busy "Checking the environment…"
+  engine env-check
+  clear_list
+  local line k s d blocker=0
+  for line in "${RESULT[@]}"; do
+    IFS='|' read -r k s d <<<"$line"
+    [[ -z $k ]] && continue
+    [[ $s == fail ]] && blocker=1
+    [[ $k == firmware && $s == ok ]] && UEFI=1
+    L_LABEL+=("$(env_label "$k")")
+    L_STATE+=("$s"); L_TAG+=("$s"); L_DESC+=("$d")
+  done
+  [[ -z $BOOTLOADER ]] && BOOTLOADER=$([[ $UEFI == 1 ]] && echo systemd-boot || echo grub)
+
+  if (( blocker )); then
+    L_LABEL+=("Cannot continue"); L_STATE+=("fail"); L_TAG+=("")
+    L_DESC+=("One of the checks above failed. Fix it and start the wizard again — nothing has been written to any disk.")
+  fi
+
+  list_screen "Install Arch Linux — environment" \
+    "enter $( ((blocker)) && echo "re-check" || echo "continue" )   esc quit"
+  local rc=$?
+  (( rc == 2 )) && return 2
+  (( rc == 1 )) && return 2
+  (( blocker )) || return 0
+ done
+}
+
+env_label() {
+  case "$1" in
+    live)     echo "Live environment" ;;
+    root)     echo "Privileges" ;;
+    firmware) echo "Firmware" ;;
+    network)  echo "Network" ;;
+    disks)    echo "Disks" ;;
+    memory)   echo "Memory" ;;
+    *)        echo "$1" ;;
+  esac
+}
+
+step_disk() {
+ while :; do
+  busy "Scanning disks…"
+  engine disks
+  clear_list
+  local line _t dev size model tran reason
+  local -a devs=() blocked=()
+  for line in "${RESULT[@]}"; do
+    [[ $line == DSK\|* ]] || continue
+    IFS='|' read -r _t dev size model tran reason <<<"$line"
+    devs+=("$dev"); blocked+=("$reason")
+    L_LABEL+=("$dev")
+    L_TAG+=("$size")
+    if [[ -n $reason ]]; then
+      L_STATE+=("fail")
+      L_DESC+=("$model ($tran) — UNAVAILABLE: $reason")
+    else
+      L_STATE+=("off")
+      L_DESC+=("$model, $size, $tran. Selecting this disk will destroy everything on it. You will get a full plan and a typed confirmation before anything is written.")
+    fi
+  done
+  if (( ${#L_LABEL[@]} == 0 )); then
+    msgbox "Disks" "No disks found at all. Nothing to install onto."
+    return 2
+  fi
+
+  list_screen "Install Arch Linux — target disk" "enter select   esc back   q quit"
+  local rc=$?
+  (( rc == 2 )) && return 2
+  (( rc == 1 )) && return 1
+
+  local i=$L_INDEX
+  if [[ -n ${blocked[i]} ]]; then
+    msgbox "Disk unavailable" "${devs[i]} cannot be used: ${blocked[i]}"
+    continue
+  fi
+  DISK="${devs[i]}"
+  DISK_LABEL="${devs[i]} (${L_TAG[i]})"
+  return 0
+ done
+}
+
+# choose_one <title> <varname> <label:value:desc> ...
+choose_one() {
+  local title=$1 var=$2; shift 2
+  clear_list
+  local -a vals=()
+  local e lbl val dsc
+  for e in "$@"; do
+    IFS=':' read -r lbl val dsc <<<"$e"
+    vals+=("$val")
+    L_LABEL+=("$lbl"); L_DESC+=("$dsc"); L_TAG+=(""); L_STATE+=("")
+  done
+  local cur="${!var}" i
+  for i in "${!vals[@]}"; do
+    [[ ${vals[i]} == "$cur" ]] && L_STATE[i]="on"
+  done
+  list_screen "$title" "enter choose   esc back   q quit"
+  local rc=$?
+  (( rc == 2 )) && return 2
+  (( rc == 1 )) && return 1
+  printf -v "$var" '%s' "${vals[L_INDEX]}"
+  return 0
+}
+
+step_fs() {
+  choose_one "Filesystem" FS \
+    "btrfs:btrfs:Subvolumes, transparent zstd compression and snapshots. The layout the wizard creates (@ @home @var_log @var_pkg @snapshots) is what snapper expects, so rollbacks work out of the box." \
+    "ext4:ext4:Boring and bulletproof. No snapshots, no compression, nothing to understand. Pick this if you do not want btrfs."
+}
+
+step_kernel() {
+  choose_one "Kernel" KERNEL \
+    "linux-zen:linux-zen:Tuned for desktop responsiveness. A good default for a gaming machine." \
+    "linux:linux:The stock Arch kernel. The most predictable choice." \
+    "linux-lts:linux-lts:Long-term support. Older, most stable, best for machines you do not want to think about."
+}
+
+step_bootloader() {
+  if (( UEFI == 0 )); then
+    BOOTLOADER=grub
+    return 0
+  fi
+  choose_one "Bootloader" BOOTLOADER \
+    "systemd-boot:systemd-boot:Minimal UEFI boot manager, already part of systemd. Fast, and the entries are plain text files you can edit." \
+    "grub:grub:More features and more moving parts. Pick it if you plan to dual-boot with another OS that GRUB should detect."
+}
+
+step_desktop() {
+  choose_one "Desktop" DESKTOP \
+    "None (console only):none:Just the base system and a text login. Add whatever you want afterwards." \
+    "Hyprland:hyprland:Wayland tiling compositor with kitty, waybar, wofi and greetd as the login manager. Minimal — you configure it yourself." \
+    "KDE Plasma:kde:Full desktop with SDDM. The safest choice if you want everything to work immediately." \
+    "GNOME:gnome:Full desktop with GDM."
+}
+
+step_swap() {
+  choose_one "Swap" SWAP \
+    "zram (compressed RAM):zram:A compressed swap device in RAM, sized to at most 8 GiB. No disk partition, no wear, and much faster than swapping to disk." \
+    "None:none:No swap at all. Fine with plenty of RAM, but the kernel will kill processes rather than swap under pressure."
+}
+
+step_gaming() {
+  local v=$([[ $GAMING == 1 ]] && echo yes || echo no)
+  choose_one "Gaming setup" v \
+    "yes:yes:After the base install, run Akari's own gaming setup inside the new system: multilib, GPU drivers for the detected card, Steam, Lutris, Proton tooling, gamescope, MangoHud, audio and controller rules. This is the whole point of installing from Akari." \
+    "no:no:Install a plain Arch system. You can run the gaming setup any time later from akari-tui." \
+    || return $?
+  GAMING=$([[ $v == yes ]] && echo 1 || echo 0)
+  return 0
+}
+
+step_aur() {
+  choose_one "AUR helper" AURHELPER \
+    "paru:paru:Build paru during installation so AUR packages are available on first boot. Adds a few minutes." \
+    "none:none:Skip it. akari-tui can install paru later in one step."
+}
+
+step_locale() {
+  input_screen "Timezone" "Timezone" "$TIMEZONE" text \
+    "Region/City, as in Europe/Rome or America/New_York. The wizard guessed this from your IP address; correct it if it is wrong." || return 1
+  [[ -n $INPUT_VALUE ]] && TIMEZONE=$INPUT_VALUE
+
+  input_screen "Locale" "System locale" "$LOCALE" text \
+    "The locale to generate and set as LANG, for example en_US.UTF-8 or it_IT.UTF-8." || return 1
+  [[ -n $INPUT_VALUE ]] && LOCALE=$INPUT_VALUE
+
+  input_screen "Keymap" "Console keymap" "$KEYMAP" text \
+    "The console keyboard layout: us, it, de, uk… This is the TTY layout; your desktop sets its own." || return 1
+  [[ -n $INPUT_VALUE ]] && KEYMAP=$INPUT_VALUE
+  return 0
+}
+
+step_identity() {
+  while :; do
+    input_screen "Hostname" "Machine name" "$HOSTNAME_V" text \
+      "Letters, digits and hyphens only." || return 1
+    if [[ $INPUT_VALUE =~ ^[a-zA-Z0-9-]+$ ]]; then HOSTNAME_V=$INPUT_VALUE; break; fi
+    msgbox "Hostname" "'$INPUT_VALUE' is not a valid hostname. Use letters, digits and hyphens only."
+  done
+
+  while :; do
+    input_screen "User" "Username" "$USERNAME_V" text \
+      "Your everyday account. It will be in the wheel group and able to use sudo. Lowercase letters, digits, - and _ ; must not start with a digit." || return 1
+    if [[ $INPUT_VALUE =~ ^[a-z_][a-z0-9_-]*$ ]]; then USERNAME_V=$INPUT_VALUE; break; fi
+    msgbox "Username" "'$INPUT_VALUE' is not a valid username."
+  done
+
+  while :; do
+    input_screen "Password" "Password for $USERNAME_V" "" password \
+      "Nothing is echoed. This is also used for sudo." || return 1
+    local p1=$INPUT_VALUE
+    [[ -z $p1 ]] && { msgbox "Password" "The password cannot be empty."; continue; }
+    input_screen "Password" "Repeat the password" "" password "Type it again to be sure." || return 1
+    if [[ $p1 == "$INPUT_VALUE" ]]; then USERPASS=$p1; break; fi
+    msgbox "Password" "The two passwords do not match. Try again."
+  done
+
+  local same=yes
+  choose_one "Root password" same \
+    "yes:yes:Use the same password for root. Simplest, and you will use sudo day to day anyway." \
+    "no:no:Set a separate root password." || return 1
+  if [[ $same == yes ]]; then
+    ROOTPASS=$USERPASS
+  else
+    while :; do
+      input_screen "Root password" "Password for root" "" password "Nothing is echoed." || return 1
+      local r1=$INPUT_VALUE
+      [[ -z $r1 ]] && { msgbox "Root password" "The password cannot be empty."; continue; }
+      input_screen "Root password" "Repeat the root password" "" password "Type it again." || return 1
+      if [[ $r1 == "$INPUT_VALUE" ]]; then ROOTPASS=$r1; break; fi
+      msgbox "Root password" "The two passwords do not match. Try again."
+    done
+  fi
+  return 0
+}
+
+write_config() {
+  local old
+  old=$(umask); umask 077
+  cat > "$CONF" <<CFG
+DISK=$DISK
+FS=$FS
+SWAP=$SWAP
+BOOTLOADER=$BOOTLOADER
+KERNEL=$KERNEL
+HOSTNAME=$HOSTNAME_V
+USERNAME=$USERNAME_V
+USERPASS=$USERPASS
+ROOTPASS=$ROOTPASS
+TIMEZONE=$TIMEZONE
+LOCALE=$LOCALE
+KEYMAP=$KEYMAP
+DESKTOP=$DESKTOP
+GAMING=$GAMING
+AURHELPER=$AURHELPER
+CONFIRM=$1
+CFG
+  umask "$old"
+}
+
+step_review() {
+  write_config ""
+  busy "Building the plan…"
+  local -a lines=()
+  while IFS= read -r l; do lines+=("$l"); done < <(bash "$ENGINE" plan "$CONF" 2>&1)
+  PAGER_KEYS="↑↓ scroll   enter continue   esc back   q quit" \
+    pager_screen "Review — nothing has been written yet" "${lines[@]}"
+  local rc=$?
+  (( rc == 2 )) && return 2
+  (( rc == 1 )) && return 1
+  return 0
+}
+
+step_confirm() {
+  if confirm_typed "Point of no return" \
+       "This will erase $DISK_LABEL completely and install Arch Linux on it." \
+       "WIPE"
+  then
+    return 0
+  fi
+  msgbox "Cancelled" "Not confirmed — nothing was written. Press esc to go back to the review."
+  return 1
+}
+
+step_run() {
+  write_config "WIPE"
+  term_done
+  clear
+  printf '%s%s%s\n' "$C_RED$C_B" "Installing Arch Linux on $DISK" "$C_RST"
+  rule
+  bash "$ENGINE" apply "$CONF"
+  local rc=$?
+  rule
+  if (( rc == 0 )); then
+    printf '%sInstallation complete.%s\n\n' "$C_GRN" "$C_RST"
+    printf 'Now:  umount -R /mnt && reboot\n'
+    printf 'Remove the USB stick when the machine restarts.\n'
+  else
+    printf '%sInstallation failed (exit %d).%s\n' "$C_ERR" "$rc" "$C_RST"
+    printf 'The log is at /var/log/akari-install.log.\n'
+    printf 'Nothing is mounted over your data — the target disk was already erased,\n'
+    printf 'so you can simply run the wizard again.\n'
+  fi
+  # Passwords do not outlive the install.
+  shred -u "$CONF" 2>/dev/null || rm -f "$CONF"
+  printf '\n'
+  pause_key
+  exit $rc
+}
+
+# ---------------------------------------------------------------- wizard
+
+STEPS=(step_env step_disk step_fs step_kernel step_bootloader step_swap
+       step_desktop step_locale step_identity step_gaming step_aur
+       step_review step_confirm step_run)
+
+run_wizard() {
+  local i=0 rc
+  while (( i < ${#STEPS[@]} )); do
+    "${STEPS[i]}"
+    rc=$?
+    case $rc in
+      0) (( i++ )) ;;
+      1) (( i > 0 )) && (( i-- )) || return 0 ;;
+      2) return 0 ;;
+    esac
+  done
+}
+
+# ---------------------------------------------------------------- entry
+
+case "${1:-}" in
+  --version|-V) echo "akari-install wizard (engine: $(bash "$ENGINE" --version))"; exit 0 ;;
+  --help|-h)
+    cat <<HELP
+akari-install — Arch Linux installation wizard (live ISO only)
+
+  akari-install          start the wizard
+  akari-install --help   this text
+
+The wizard only collects answers. The work is done by:
+  $ENGINE
+which can also be driven directly from a config file:
+  akari-install.sh sample-config > my.conf
+  akari-install.sh plan  my.conf
+  akari-install.sh apply my.conf
+HELP
+    exit 0 ;;
+  "") : ;;
+  *) echo "akari-install: unknown option '$1' (try --help)" >&2; exit 1 ;;
+esac
+
+[[ -t 0 && -t 1 ]] || { echo "akari-install: needs an interactive terminal." >&2; exit 1; }
+[[ $EUID -eq 0 ]]  || { echo "akari-install: must be run as root (you are root on the Arch ISO)." >&2; exit 1; }
+
+# Best-guess timezone before the UI starts, so the field is pre-filled.
+TIMEZONE=$(bash "$ENGINE" detect-tz 2>/dev/null || echo UTC)
+
+term_init
+run_wizard
+term_done
+clear
+printf '%s A K A R I %s  — wizard closed. Nothing was written unless you confirmed.\n' \
+  "$C_RED$C_B" "$C_RST"

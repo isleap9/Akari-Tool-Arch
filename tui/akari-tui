@@ -1,0 +1,594 @@
+#!/usr/bin/env bash
+#
+# akari-tui — terminal frontend for the Akari Tool backend.
+#
+# Speaks exactly the same protocol as the QML GUI: it runs
+# backend/akari-setup.sh and parses its machine-readable lines.
+# No backend logic lives here. No dependencies beyond bash + coreutils,
+# so it also runs on a bare Arch ISO.
+#
+# Usage: akari-tui [--help] [--version]
+#
+set -uo pipefail   # deliberately no -e: the UI loop handles failures itself
+
+AKARI_TUI_VERSION="0.1.0"
+
+# ---------------------------------------------------------------- backend
+
+find_backend() {
+  local here c
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  for c in \
+    "$here/../backend/akari-setup.sh" \
+    "$here/backend/akari-setup.sh" \
+    "/usr/share/akari-tool/backend/akari-setup.sh" \
+    "/usr/lib/akari-tool/backend/akari-setup.sh"
+  do
+    [[ -r $c ]] && {
+      printf '%s/%s\n' "$(cd "$(dirname "$c")" && pwd -P)" "$(basename "$c")"
+      return 0
+    }
+  done
+  command -v akari-setup.sh 2>/dev/null && return 0
+  return 1
+}
+
+BACKEND="$(find_backend)" || {
+  echo "akari-tui: cannot find backend/akari-setup.sh" >&2
+  exit 1
+}
+
+# Run a backend command, capture stdout into the global array RESULT.
+# Backend failures are non-fatal — the screen just shows what it got.
+RESULT=()
+backend() {
+  RESULT=()
+  local line
+  while IFS= read -r line; do RESULT+=("$line"); done < <(bash "$BACKEND" "$@" 2>/dev/null)
+  return 0
+}
+
+# ---------------------------------------------------------------- shared UI
+# Drawing, input and generic screens live in lib/ui.sh, shared with
+# tui/akari-install. Nothing Akari-specific belongs in there.
+UI_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/ui.sh"
+[[ -r $UI_LIB ]] || { echo "akari-tui: missing $UI_LIB" >&2; exit 1; }
+# shellcheck source=/dev/null
+source "$UI_LIB"
+
+# do_action <title> <plan args...> -- <apply args...>
+do_action() {
+  local title=$1; shift
+  local -a plan_args=() apply_args=(); local seen=0 a
+  for a in "$@"; do
+    if [[ $a == "--" && $seen == 0 ]]; then seen=1; continue; fi
+    if (( seen )); then apply_args+=("$a"); else plan_args+=("$a"); fi
+  done
+
+  term_done
+  term_size
+  clear
+  printf '%s%s%s\n' "$C_RED$C_B" "$title" "$C_RST"
+  rule
+  if (( ${#plan_args[@]} )); then
+    bash "$BACKEND" "${plan_args[@]}"
+  fi
+  rule
+  printf '%sApply these changes? [y/N] %s' "$C_B" "$C_RST"
+  local ans=""
+  stty echo 2>/dev/null
+  IFS= read -r ans 2>/dev/null
+  if [[ ${ans,,} != y && ${ans,,} != yes ]]; then
+    printf '%sCancelled — nothing was changed.%s\n' "$C_MUT" "$C_RST"
+    pause_key
+    term_init
+    return 1
+  fi
+  rule
+  bash "$BACKEND" "${apply_args[@]}"
+  local rc=$?
+  rule
+  if (( rc == 0 )); then
+    printf '%sDone.%s\n' "$C_GRN" "$C_RST"
+  else
+    printf '%sFinished with errors (exit %d).%s\n' "$C_ERR" "$rc" "$C_RST"
+  fi
+  pause_key
+  term_init
+  return $rc
+}
+
+# ---------------------------------------------------------------- screens
+
+
+check_label() {
+  case "$1" in
+    arch)      echo "Arch Linux" ;;
+    root)      echo "Privileges" ;;
+    network)   echo "Network" ;;
+    multilib)  echo "multilib repository" ;;
+    cpu)       echo "CPU" ;;
+    ram)       echo "Memory" ;;
+    gpu)       echo "Graphics" ;;
+    gaming)    echo "Gaming packages" ;;
+    proton)    echo "Proton-GE" ;;
+    aur)       echo "AUR helper" ;;
+    tweaks)    echo "Performance tweaks" ;;
+    staleness) echo "Last full update" ;;
+    mirrors)   echo "Mirror list" ;;
+    cache)     echo "Package cache" ;;
+    snapshots) echo "Snapshots" ;;
+    flatpak)   echo "Flatpak" ;;
+    update)    echo "Pending updates" ;;
+    *)         echo "$1" ;;
+  esac
+}
+
+screen_overview() {
+  while :; do
+    busy "Reading system status…"
+    backend check
+    clear_list
+    local line k s d
+    for line in "${RESULT[@]}"; do
+      IFS='|' read -r k s d <<<"$line"
+      [[ -z $k ]] && continue
+      L_LABEL+=("$(check_label "$k")")
+      L_STATE+=("$s")
+      L_DESC+=("$d")
+      L_TAG+=("$s")
+    done
+    (( ${#L_LABEL[@]} == 0 )) && L_LABEL=("no data") && L_STATE=("warn") && L_DESC=("The backend returned nothing.") && L_TAG=("")
+    list_screen "System overview" "↑↓ move   enter re-check   esc back   q quit"
+    case $? in
+      0) : ;;      # enter falls through the loop and re-runs the checks
+      1) return 0 ;;
+      2) return 2 ;;
+    esac
+  done
+}
+
+screen_diagnose() {
+  busy "Running functional tests…"
+  backend diagnose
+  clear_list
+  local line _t key st title detail fix
+  for line in "${RESULT[@]}"; do
+    [[ $line == DIA\|* ]] || continue
+    IFS='|' read -r _t key st title detail fix <<<"$line"
+    L_LABEL+=("$title")
+    L_STATE+=("$st")
+    L_TAG+=("")
+    if [[ -n $fix ]]; then
+      L_DESC+=("$detail   ·   Fix: $fix")
+    else
+      L_DESC+=("$detail")
+    fi
+  done
+  (( ${#L_LABEL[@]} == 0 )) && { msgbox "Diagnose" "No results — is the backend able to run here?"; return 0; }
+  list_screen "Diagnose" "↑↓ move   esc back   q quit"
+  [[ $? == 2 ]] && return 2
+  return 0
+}
+
+screen_changelog() {
+  backend log
+  pager_screen "Change log" "${RESULT[@]}"
+  [[ $? == 2 ]] && return 2
+  return 0
+}
+
+screen_packages() {
+  busy "Reading package list…"
+  backend packages
+  clear_list
+  local line _t grp name inst
+  local -a names=()
+  for line in "${RESULT[@]}"; do
+    [[ $line == PKG\|* ]] || continue
+    IFS='|' read -r _t grp name inst <<<"$line"
+    names+=("$name")
+    L_LABEL+=("$name")
+    L_TAG+=("$grp")
+    L_STATE+=("")
+    L_SEL+=("$inst")
+    if [[ $inst == 1 ]]; then
+      L_DESC+=("$name — already installed (group: $grp). Leaving it selected is harmless.")
+    else
+      L_DESC+=("$name — not installed (group: $grp). Select it to install.")
+    fi
+  done
+  (( ${#L_LABEL[@]} == 0 )) && { msgbox "Packages" "No package data returned."; return 0; }
+
+  list_screen "Choose packages   ·   space toggles" \
+              "space toggle   enter install selected   esc back   q quit" 1
+  local rc=$?
+  (( rc == 2 )) && return 2
+  (( rc == 1 )) && return 0
+
+  local -a want=()
+  local i
+  for i in "${!names[@]}"; do
+    [[ ${L_SEL[i]} == 1 ]] && want+=("${names[i]}")
+  done
+  (( ${#want[@]} == 0 )) && { msgbox "Packages" "Nothing selected."; return 0; }
+
+  term_done
+  clear
+  printf '%s%s%s\n' "$C_RED$C_B" "Install selected packages" "$C_RST"
+  rule
+  printf 'These %d packages will be installed (already-present ones are skipped):\n\n' "${#want[@]}"
+  printf '  %s\n' "${want[@]}"
+  rule
+  printf '%sProceed? [y/N] %s' "$C_B" "$C_RST"
+  local ans=""; stty echo 2>/dev/null; IFS= read -r ans 2>/dev/null
+  if [[ ${ans,,} == y || ${ans,,} == yes ]]; then
+    rule
+    bash "$BACKEND" apply selected "${want[@]}"
+    rule
+    printf '%sDone.%s\n' "$C_GRN" "$C_RST"
+  else
+    printf '%sCancelled.%s\n' "$C_MUT" "$C_RST"
+  fi
+  pause_key
+  term_init
+  return 0
+}
+
+screen_apps() {
+  busy "Reading installed applications…"
+  backend apps
+  clear_list
+  local line _t src name ver size prot desc
+  local -a names=() prots=()
+  for line in "${RESULT[@]}"; do
+    [[ $line == APP\|* ]] || continue
+    IFS='|' read -r _t src name ver size prot desc <<<"$line"
+    names+=("$name"); prots+=("$prot")
+    L_LABEL+=("$name")
+    L_TAG+=("$([[ $src == flatpak ]] && echo flatpak || echo "$size")")
+    L_STATE+=("")
+    L_SEL+=("0")
+    if [[ $prot == 1 ]]; then
+      L_DESC+=("$name $ver — PROTECTED. Critical to a working system; the backend will refuse to remove it. $desc")
+    else
+      L_DESC+=("$name $ver ($src, $size) — $desc")
+    fi
+  done
+  (( ${#L_LABEL[@]} == 0 )) && { msgbox "Applications" "No application data returned."; return 0; }
+
+  list_screen "Installed applications   ·   space marks for removal" \
+              "space mark   enter uninstall marked   esc back   q quit" 1
+  local rc=$?
+  (( rc == 2 )) && return 2
+  (( rc == 1 )) && return 0
+
+  local -a want=(); local i blocked=""
+  for i in "${!names[@]}"; do
+    if [[ ${L_SEL[i]} == 1 ]]; then
+      if [[ ${prots[i]} == 1 ]]; then blocked+=" ${names[i]}"; else want+=("${names[i]}"); fi
+    fi
+  done
+  if [[ -n $blocked ]]; then
+    msgbox "Protected packages" "Refusing to remove:$blocked — these are critical system packages. Unmark them and try again."
+    return 0
+  fi
+  (( ${#want[@]} == 0 )) && { msgbox "Applications" "Nothing marked."; return 0; }
+
+  do_action "Uninstall applications" plan remove "${want[@]}" -- apply remove "${want[@]}"
+  return 0
+}
+
+screen_kernels() {
+  while :; do
+    busy "Reading kernels…"
+    backend kernels
+    clear_list
+    local line _t name src desc inst run
+    local -a names=() insts=() runs=()
+    for line in "${RESULT[@]}"; do
+      [[ $line == KRN\|* ]] || continue
+      IFS='|' read -r _t name src desc inst run <<<"$line"
+      names+=("$name"); insts+=("$inst"); runs+=("$run")
+      L_LABEL+=("$name")
+      L_STATE+=("$([[ $inst == 1 ]] && echo on || echo off)")
+      if [[ $run == 1 ]]; then
+        L_TAG+=("running")
+        L_DESC+=("$desc — installed, and this is the kernel you are booted into right now. It cannot be removed.")
+      elif [[ $inst == 1 ]]; then
+        L_TAG+=("installed")
+        L_DESC+=("$desc — installed but not running. Enter to remove it.")
+      else
+        L_TAG+=("$src")
+        L_DESC+=("$desc — not installed. Enter to install it alongside your current kernel; nothing is replaced.")
+      fi
+    done
+    (( ${#L_LABEL[@]} == 0 )) && { msgbox "Kernels" "No kernel data returned."; return 0; }
+
+    list_screen "Kernels" "enter install/remove   esc back   q quit"
+    local rc=$?
+    (( rc == 2 )) && return 2
+    (( rc == 1 )) && return 0
+
+    local i=$L_INDEX n="${names[L_INDEX]}"
+    if [[ ${runs[i]} == 1 ]]; then
+      msgbox "Kernels" "$n is the running kernel — reboot into another one before removing it."
+    elif [[ ${insts[i]} == 1 ]]; then
+      do_action "Remove kernel: $n" plan remove-kernel "$n" -- apply remove-kernel "$n"
+    else
+      do_action "Install kernel: $n" plan kernel "$n" -- apply kernel "$n"
+    fi
+  done
+}
+
+screen_restore() {
+  while :; do
+    busy "Looking for backups…"
+    backend restore-list
+    clear_list
+    local line _t id bak orig ts
+    local -a ids=()
+    for line in "${RESULT[@]}"; do
+      [[ $line == RST\|* ]] || continue
+      IFS='|' read -r _t id bak orig ts <<<"$line"
+      ids+=("$id")
+      L_LABEL+=("$id")
+      L_STATE+=("")
+      L_TAG+=("")
+      if [[ $id == snapper ]]; then
+        L_DESC+=("$ts")
+      else
+        L_DESC+=("Backup of $orig, taken $ts. Enter restores it over the current file (the current one is kept as .before-restore).")
+      fi
+    done
+    if (( ${#L_LABEL[@]} == 0 )); then
+      msgbox "Restore" "No backups found. Akari only creates them when it edits a file, so an untouched system has none."
+      return 0
+    fi
+
+    list_screen "Restore backups" "enter restore   esc back   q quit"
+    local rc=$?
+    (( rc == 2 )) && return 2
+    (( rc == 1 )) && return 0
+
+    local id="${ids[L_INDEX]}"
+    if [[ $id == snapper ]]; then
+      msgbox "Restore" "Snapper snapshots are managed with 'snapper list' and 'snapper rollback' — not from here."
+    else
+      do_action "Restore: $id" plan restore "$id" -- apply restore "$id"
+    fi
+  done
+}
+
+screen_launchopts() {
+  busy "Reading Steam library…"
+  backend steam-games
+  clear_list
+  local line _t appid name opts
+  local -a ids=() cur=()
+  for line in "${RESULT[@]}"; do
+    if [[ $line == ERR\|* ]]; then
+      msgbox "Steam launch options" "Steam user data not found — is Steam installed and logged in at least once?"
+      return 0
+    fi
+    [[ $line == SGM\|* ]] || continue
+    IFS='|' read -r _t appid name opts <<<"$line"
+    ids+=("$appid"); cur+=("$opts")
+    L_LABEL+=("$name")
+    L_STATE+=("$([[ -n $opts ]] && echo on || echo off)")
+    L_TAG+=("$appid")
+    L_DESC+=("${opts:-No launch options set.}")
+  done
+  (( ${#L_LABEL[@]} == 0 )) && { msgbox "Steam launch options" "No games found in the Steam library."; return 0; }
+
+  list_screen "Steam launch options" "enter edit   esc back   q quit"
+  local rc=$?
+  (( rc == 2 )) && return 2
+  (( rc == 1 )) && return 0
+
+  local i=$L_INDEX appid="${ids[i]}" gname="${L_LABEL[i]}" existing="${cur[i]}"
+
+  # toggle builder
+  clear_list
+  local -a tok=("gamemoderun" "mangohud" "gamescope -f --")
+  local -a tdesc=(
+    "Ask gamemoded to apply the performance governor while the game runs."
+    "Overlay showing FPS, frametimes, CPU/GPU load."
+    "Run the game inside a gamescope micro-compositor, fullscreen."
+  )
+  local t
+  for t in "${!tok[@]}"; do
+    L_LABEL+=("${tok[t]}")
+    L_DESC+=("${tdesc[t]}")
+    L_STATE+=(""); L_TAG+=("")
+    L_SEL+=("$([[ $existing == *"${tok[t]%% *}"* ]] && echo 1 || echo 0)")
+  done
+
+  list_screen "Launch options: $gname" \
+              "space toggle   enter apply   esc cancel   q quit" 1
+  rc=$?
+  (( rc == 2 )) && return 2
+  (( rc == 1 )) && return 0
+
+  # gamescope must sit last, immediately before %command%
+  local built=""
+  [[ ${L_SEL[0]} == 1 ]] && built+="gamemoderun "
+  [[ ${L_SEL[1]} == 1 ]] && built+="mangohud "
+  [[ ${L_SEL[2]} == 1 ]] && built+="gamescope -f -- "
+  built+="%command%"
+  [[ $built == "%command%" ]] && built=""
+
+  do_action "Launch options: $gname" \
+            plan launchopts "$appid" "$built" -- apply launchopts "$appid" "$built"
+  return 0
+}
+
+# ---------------------------------------------------------------- menus
+
+menu_gaming() {
+  while :; do
+    clear_list
+    L_LABEL=(
+      "Set up everything"
+      "Install gaming packages"
+      "Enable multilib"
+      "Performance tweaks"
+      "Choose packages individually"
+      "Install AUR helper (paru)"
+      "Set up Flatpak + Flathub"
+    )
+    L_DESC=(
+      "The one-click path: multilib, GPU drivers for your detected card, the full gaming package set, audio, controller rules and the conservative tweaks. Shows a plan first."
+      "Steam, Lutris, Wine, Proton tooling, gamescope, MangoHud, gamemode, the 32-bit dependency set and the fonts games expect."
+      "Uncomments [multilib] in pacman.conf and refreshes the database. Required for Steam and every lib32- package."
+      "vm.max_map_count for modern Proton titles, plus adding you to the gamemode and input groups. Conservative — nothing exotic."
+      "Browse every package Akari knows about, grouped, and pick exactly what you want."
+      "Builds paru from the AUR so the optional extras (Heroic, ProtonUp-Qt, GOverlay) become available."
+      "Installs flatpak and adds the Flathub remote — the AUR-free route to Heroic, ProtonUp-Qt and Bottles."
+    )
+    L_STATE=("" "" "" "" "" "" ""); L_TAG=("" "" "" "" "" "" "")
+
+    list_screen "Gaming setup" "enter select   esc back   q quit"
+    local rc=$?
+    (( rc == 2 )) && return 2
+    (( rc == 1 )) && return 0
+
+    case $L_INDEX in
+      0) do_action "Set up everything"        plan all      -- apply all ;;
+      1) do_action "Install gaming packages"  plan gaming   -- apply gaming ;;
+      2) do_action "Enable multilib"          plan multilib -- apply multilib ;;
+      3) do_action "Performance tweaks"       plan tweaks   -- apply tweaks ;;
+      4) screen_packages; [[ $? == 2 ]] && return 2 ;;
+      5) do_action "Install paru"             plan paru     -- apply paru ;;
+      6) do_action "Set up Flatpak"           plan flatpak-setup -- apply flatpak-setup ;;
+    esac
+  done
+}
+
+menu_maintenance() {
+  while :; do
+    clear_list
+    L_LABEL=(
+      "System update"
+      "Rank mirrors"
+      "Clean package cache"
+      "Create a snapshot"
+      "Update Akari Tool"
+    )
+    L_DESC=(
+      "A full pacman -Syu, with a snapshot taken first if snapper or timeshift is available. Never a partial upgrade."
+      "Runs reflector to sort your mirrorlist by speed, keeping a backup of the old list. Fixes most 'downloads are slow' complaints."
+      "Trims the pacman cache to the two most recent versions of each installed package and drops cached versions of packages you removed."
+      "Takes a pre-change snapshot now, so you have a known-good point to roll back to before you experiment."
+      "Pulls the newest Akari Tool release."
+    )
+    L_STATE=("" "" "" "" ""); L_TAG=("" "" "" "" "")
+
+    list_screen "Maintenance" "enter select   esc back   q quit"
+    local rc=$?
+    (( rc == 2 )) && return 2
+    (( rc == 1 )) && return 0
+
+    case $L_INDEX in
+      0) do_action "System update"       plan sysupdate   -- apply sysupdate ;;
+      1) do_action "Rank mirrors"        plan mirrors     -- apply mirrors ;;
+      2) do_action "Clean package cache" plan cleanup     -- apply cleanup ;;
+      3) do_action "Create a snapshot"   plan snapshot    -- apply snapshot ;;
+      4) do_action "Update Akari Tool"   plan self-update -- apply self-update ;;
+    esac
+  done
+}
+
+menu_main() {
+  while :; do
+    clear_list
+    L_LABEL=(
+      "System overview"
+      "Gaming setup"
+      "Applications"
+      "Kernels"
+      "Maintenance"
+      "Diagnose"
+      "Steam launch options"
+      "Restore backups"
+      "Change log"
+      "Quit"
+    )
+    L_DESC=(
+      "Everything Akari checks about this machine: Arch, network, multilib, CPU, RAM, GPU and drivers, the gaming stack, Proton, AUR helper, tweaks, mirrors, cache, snapshots and pending updates."
+      "Install and configure the gaming stack — the same actions the GUI's Gaming page offers."
+      "Every package and Flatpak you explicitly installed, with sizes, and a safe uninstaller that refuses to touch critical system packages."
+      "Install or remove additional kernels alongside your current one. Nothing is ever replaced; you pick the new one from the boot menu."
+      "Updates, mirror ranking, cache cleanup, snapshots and self-update."
+      "Functional tests, not just package presence: does Vulkan actually answer in both bitnesses, is the discrete GPU visible, did the dkms modules build, is audio up, are controllers usable."
+      "Browse your Steam library and set per-game launch options from a toggle list."
+      "Every file Akari edited has a .akari.bak beside it. This lists them and puts any of them back."
+      "A timestamped record of everything this tool has changed on this system."
+      "Leave the tool."
+    )
+    local i; for i in {0..9}; do L_STATE+=(""); L_TAG+=(""); done
+
+    list_screen "Home" "↑↓ move   enter select   q quit"
+    local rc=$?
+    (( rc == 2 )) && return 0
+    (( rc == 1 )) && continue
+
+    local out=0
+    case $L_INDEX in
+      0) screen_overview;   out=$? ;;
+      1) menu_gaming;       out=$? ;;
+      2) screen_apps;       out=$? ;;
+      3) screen_kernels;    out=$? ;;
+      4) menu_maintenance;  out=$? ;;
+      5) screen_diagnose;   out=$? ;;
+      6) screen_launchopts; out=$? ;;
+      7) screen_restore;    out=$? ;;
+      8) screen_changelog;  out=$? ;;
+      9) return 0 ;;
+    esac
+    (( out == 2 )) && return 0
+  done
+}
+
+# ---------------------------------------------------------------- entry
+
+case "${1:-}" in
+  --version|-V) echo "akari-tui $AKARI_TUI_VERSION (backend: $(bash "$BACKEND" --version))"; exit 0 ;;
+  --help|-h)
+    cat <<HELP
+akari-tui — terminal frontend for Akari Tool
+
+  akari-tui              start the interactive interface
+  akari-tui --version    version of the TUI and of the backend
+  akari-tui --help       this text
+
+Keys:  ↑↓/jk move · enter select · space toggle · esc back · q quit
+
+Everything this tool does is performed by the same backend the GUI uses:
+  $BACKEND
+which is also usable directly:  akari-setup.sh --help
+HELP
+    exit 0 ;;
+  "") : ;;
+  *) echo "akari-tui: unknown option '$1' (try --help)" >&2; exit 1 ;;
+esac
+
+if [[ ! -t 0 || ! -t 1 ]]; then
+  echo "akari-tui: needs an interactive terminal." >&2
+  echo "For scripting, use the backend directly: $BACKEND --help" >&2
+  exit 1
+fi
+
+if [[ $EUID -eq 0 ]]; then
+  echo "akari-tui: do not run this as root." >&2
+  echo "Run it as your normal user — it uses sudo per command, and AUR" >&2
+  echo "helpers refuse to run as root." >&2
+  exit 1
+fi
+
+term_init
+menu_main
+term_done
+clear
+printf '%s A K A R I %s  — nothing left running. Backend: %s\n' \
+  "$C_RED$C_B" "$C_RST" "$BACKEND"

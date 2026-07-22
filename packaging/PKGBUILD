@@ -1,33 +1,61 @@
 # Maintainer: isleap
-pkgname=akari-tool
-pkgver=0.3.3
+#
+# Split package:
+#   akari-tool-cli — backend + terminal UI. No Qt, no Python. Works headless
+#                    and on a minimal install.
+#   akari-tool     — the QML GUI, layered on top of akari-tool-cli.
+#
+pkgbase=akari-tool
+pkgname=('akari-tool-cli' 'akari-tool')
+pkgver=0.4.0
 pkgrel=1
-pkgdesc="Gaming setup tool for vanilla Arch — dependencies, drivers, kernels & diagnosis"
 arch=('any')
 url="https://github.com/isleap9/Akari-Tool-Arch"
 license=('GPL-3.0-or-later')
-depends=('python' 'pyside6' 'bash' 'polkit' 'pciutils' 'curl')
-optdepends=(
-  'paru: AUR extras (Heroic, ProtonUp-Qt, GOverlay, linux-cachyos)'
-  'yay: AUR extras (alternative helper)'
-  'flatpak: AUR-free app installs via Flathub'
-  'snapper: pre-change snapshots on btrfs'
-  'timeshift: pre-change snapshots (alternative)'
-  'reflector: mirror optimization'
-  'pacman-contrib: package cache cleanup'
-)
-source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('2165fe8381d0901c3285ebe289d0cfddbe8a670a89c2f4ae6c68d7e37a7ee253')
+makedepends=()
+source=("$pkgbase-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
 
-package() {
+package_akari-tool-cli() {
+  pkgdesc="Gaming setup tool for vanilla Arch — backend and terminal interface"
+  depends=('bash' 'pciutils' 'curl' 'sudo')
+  # gptfdisk/dosfstools/arch-install-scripts are only needed by the installer,
+  # and they are already present on the live ISO where it runs.
+  optdepends=(
+    'paru: AUR extras (Heroic, ProtonUp-Qt, GOverlay)'
+    'yay: AUR extras (alternative helper)'
+    'flatpak: AUR-free app installs via Flathub'
+    'snapper: pre-change snapshots on btrfs'
+    'timeshift: pre-change snapshots (alternative)'
+    'reflector: mirror optimization'
+    'pacman-contrib: package cache cleanup'
+    'vulkan-tools: functional Vulkan diagnosis'
+  )
+  provides=('akari-setup')
   cd "Akari-Tool-Arch-$pkgver"
 
-  # application tree
-  install -dm755 "$pkgdir/usr/share/$pkgname"
-  cp -r akari ui backend main.py "$pkgdir/usr/share/$pkgname/"
-  chmod 755 "$pkgdir/usr/share/$pkgname/backend/akari-setup.sh"
+  install -dm755 "$pkgdir/usr/share/akari-tool"
+  cp -r backend tui "$pkgdir/usr/share/akari-tool/"
+  chmod 755 "$pkgdir/usr/share/akari-tool/backend/akari-setup.sh"
+  chmod 755 "$pkgdir/usr/share/akari-tool/backend/akari-install.sh"
+  chmod 755 "$pkgdir/usr/share/akari-tool/tui/akari-tui"
+  chmod 755 "$pkgdir/usr/share/akari-tool/tui/akari-install"
 
-  # launcher
+  install -dm755 "$pkgdir/usr/bin"
+  ln -s /usr/share/akari-tool/tui/akari-tui          "$pkgdir/usr/bin/akari-tui"
+  ln -s /usr/share/akari-tool/tui/akari-install      "$pkgdir/usr/bin/akari-install"
+  ln -s /usr/share/akari-tool/backend/akari-setup.sh "$pkgdir/usr/bin/akari-setup"
+}
+
+package_akari-tool() {
+  pkgdesc="Gaming setup tool for vanilla Arch — graphical interface"
+  depends=('akari-tool-cli' 'python' 'pyside6' 'polkit')
+  cd "Akari-Tool-Arch-$pkgver"
+
+  # GUI only; the backend comes from akari-tool-cli
+  install -dm755 "$pkgdir/usr/share/akari-tool"
+  cp -r akari ui main.py "$pkgdir/usr/share/akari-tool/"
+
   install -dm755 "$pkgdir/usr/bin"
   cat > "$pkgdir/usr/bin/akari-tool" << 'LAUNCHER'
 #!/bin/sh
@@ -35,7 +63,6 @@ exec python /usr/share/akari-tool/main.py "$@"
 LAUNCHER
   chmod 755 "$pkgdir/usr/bin/akari-tool"
 
-  # desktop entry + icon
   install -Dm644 packaging/akari-tool.desktop \
     "$pkgdir/usr/share/applications/akari-tool.desktop"
   install -Dm644 packaging/akari-tool.png \

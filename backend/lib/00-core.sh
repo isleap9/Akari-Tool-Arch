@@ -10,7 +10,7 @@ RUN_USER="${AKARI_USER:-${USER:-$(id -un)}}"
 RUN_HOME="${AKARI_HOME:-${HOME:-/root}}"
 
 run_root() {   # run a command with root privileges
-  if [[ $EUID -eq 0 ]]; then "$@"; else run_root "$@"; fi
+  if [[ $EUID -eq 0 ]]; then "$@"; else sudo "$@"; fi
 }
 
 run_user() {   # run a command as the real user (AUR helpers refuse root)
