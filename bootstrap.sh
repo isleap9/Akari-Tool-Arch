@@ -26,4 +26,13 @@ git clone --depth 1 https://github.com/isleap9/Akari-Tool-Arch "$DEST" >/dev/nul
 
 chmod 755 "$DEST"/tui/akari-install "$DEST"/tui/akari-tui \
           "$DEST"/backend/akari-setup.sh "$DEST"/backend/akari-install.sh
-exec "$DEST/tui/akari-install"
+
+# Under `curl … | bash` our stdin is the pipe, not the terminal, so the
+# wizard would refuse to start. Hand it the real tty.
+if [[ -r /dev/tty ]]; then
+  exec "$DEST/tui/akari-install" < /dev/tty
+else
+  echo "No controlling terminal. Run it directly instead:"
+  echo "  $DEST/tui/akari-install"
+  exit 1
+fi
