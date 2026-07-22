@@ -525,15 +525,29 @@ CHROOT
     cat >> "$out" <<CHROOT
 echo "$USERNAME ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/99-akari-build
 chmod 0440 /etc/sudoers.d/99-akari-build
+# Fast path: the prebuilt binary, which takes seconds. It is linked against
+# one specific libalpm ABI, so it is only usable if it actually starts —
+# and when pacman bumps that ABI, it does not.
 runuser -u "$USERNAME" -- bash -c '
-  cd /tmp && rm -rf paru &&
-  git clone --depth 1 https://aur.archlinux.org/paru.git &&
-  cd paru && makepkg -si --noconfirm' \
-  || echo "!! paru build failed — install it later from akari-tui"
-# A paru that cannot start is worse than no paru: say so now, in the log,
-# rather than letting the user discover it on first boot.
+  cd /tmp && rm -rf paru-bin &&
+  git clone --depth 1 https://aur.archlinux.org/paru-bin.git &&
+  cd paru-bin && makepkg -si --noconfirm' || true
+
 if ! runuser -u "$USERNAME" -- paru --version >/dev/null 2>&1; then
-  echo "!! paru was installed but does not run — remove it with 'pacman -Rns paru'"
+  echo ":: paru-bin will not run here (libalpm ABI mismatch)."
+  echo ":: Building paru from source instead — this takes about ten minutes."
+  pacman -Rns --noconfirm paru-bin >/dev/null 2>&1 || true
+  runuser -u "$USERNAME" -- bash -c '
+    cd /tmp && rm -rf paru &&
+    git clone --depth 1 https://aur.archlinux.org/paru.git &&
+    cd paru && makepkg -si --noconfirm' \
+    || echo "!! paru build failed — install it later from akari-tui"
+fi
+
+if runuser -u "$USERNAME" -- paru --version >/dev/null 2>&1; then
+  echo ":: AUR helper ready"
+else
+  echo "!! no working AUR helper was installed — akari-tui can do it later"
 fi
 rm -f /etc/sudoers.d/99-akari-build
 CHROOT

@@ -32,12 +32,13 @@ plan_paru() {
   else
     echo "Will do:"
     echo "  1. pacman -S --needed base-devel git   (build prerequisites)"
-    echo "  2. git clone https://aur.archlinux.org/paru.git (as $RUN_USER)"
+    echo "  2. git clone https://aur.archlinux.org/paru-bin.git (as $RUN_USER)"
     echo "  3. makepkg -si                          (build + install as $RUN_USER)"
     echo ""
-    echo "Built from source rather than paru-bin: the -bin package ships a"
-    echo "prebuilt binary that stops working whenever pacman bumps libalpm's"
-    echo "ABI. Building takes a few minutes longer and cannot drift."
+    echo "paru-bin is a prebuilt binary and installs in seconds, but it is"
+    echo "linked against one libalpm ABI and breaks when pacman bumps it."
+    echo "If the installed binary will not start, this falls back to building"
+    echo "paru from source, which takes about ten minutes and cannot drift."
   fi
 }
 
@@ -49,9 +50,11 @@ apply_paru() {
   run_root pacman -S --needed --noconfirm base-devel git
 
   local bdir="$RUN_HOME/.cache/akari-paru-build"
-  echo ":: Building paru from the AUR (as $RUN_USER) — this takes a few minutes"
+  # Try the prebuilt binary first; verify it runs; build from source if not.
+  local pkgbase=paru-bin
+  echo ":: Installing paru-bin from the AUR (as $RUN_USER)"
   run_user rm -rf "$bdir"
-  run_user git clone --depth 1 https://aur.archlinux.org/paru.git "$bdir"
+  run_user git clone --depth 1 "https://aur.archlinux.org/$pkgbase.git" "$bdir"
 
   # makepkg refuses root and needs pacman rights for -si; reuse the same
   # temporary scoped sudoers rule as run_aur when we're the GUI's root.
@@ -66,12 +69,33 @@ apply_paru() {
     ( cd "$bdir" && makepkg -si --noconfirm )
   fi
   run_user rm -rf "$bdir"
+
+  # paru-bin links one specific libalpm ABI. If pacman has moved past it the
+  # binary installs fine and then refuses to start, so verify before trusting.
   if ! run_user paru --version >/dev/null 2>&1; then
-    echo ":: paru was installed but will not start — remove it with"
-    echo "   'sudo pacman -Rns paru' and report this."
+    echo ":: paru-bin will not run here (libalpm ABI mismatch)."
+    echo ":: Building paru from source instead — this takes about ten minutes."
+    run_root pacman -Rns --noconfirm paru-bin >/dev/null 2>&1 || true
+    run_user rm -rf "$bdir"
+    run_user git clone --depth 1 https://aur.archlinux.org/paru.git "$bdir"
+    if [[ $EUID -eq 0 && -n "${AKARI_USER:-}" ]]; then
+      local drop2=/etc/sudoers.d/99-akari-aur-tmp rc2=0
+      printf '%s ALL=(root) NOPASSWD: /usr/bin/pacman\n' "$AKARI_USER" > "$drop2"
+      chmod 0440 "$drop2"
+      runuser -u "$AKARI_USER" -- bash -c "cd '$bdir' && makepkg -si --noconfirm" || rc2=$?
+      rm -f "$drop2"
+      (( rc2 )) && { echo ":: paru build failed."; return $rc2; }
+    else
+      ( cd "$bdir" && makepkg -si --noconfirm ) || { echo ":: paru build failed."; return 1; }
+    fi
+    run_user rm -rf "$bdir"
+  fi
+
+  if ! run_user paru --version >/dev/null 2>&1; then
+    echo ":: No working AUR helper could be installed."
     return 1
   fi
-  log_change "installed paru (AUR helper), built from source"
+  log_change "installed paru (AUR helper)"
   echo ":: paru installed. AUR packages are now available in Akari."
 }
 
