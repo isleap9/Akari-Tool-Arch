@@ -1,13 +1,13 @@
 # Maintainer: isleap
 #
 # Split package:
-#   akari-tool-cli — backend + terminal UI. No Qt, no Python. Works headless
+#   akari-tool-cli — backend + terminal UI. No Qt. Works headless
 #                    and on a minimal install.
 #   akari-tool     — the QML GUI, layered on top of akari-tool-cli.
 #
 pkgbase=akari-tool
 pkgname=('akari-tool-cli' 'akari-tool')
-pkgver=0.4.0
+pkgver=0.5.1
 pkgrel=1
 arch=('any')
 url="https://github.com/isleap9/Akari-Tool-Arch"
@@ -18,7 +18,11 @@ sha256sums=('SKIP')
 
 package_akari-tool-cli() {
   pkgdesc="Gaming setup tool for vanilla Arch — backend and terminal interface"
-  depends=('bash' 'pciutils' 'curl' 'sudo')
+  # python: the backend parses Steam's VDF, Lutris' SQLite database and
+  # Heroic's JSON with an embedded helper. Stdlib only — sqlite3 and json
+  # are built in, so no jq or sqlite CLI is needed.
+  # tar: unpacking downloaded Proton/Wine builds.
+  depends=('bash' 'pciutils' 'curl' 'sudo' 'python' 'tar')
   # gptfdisk/dosfstools/arch-install-scripts are only needed by the installer,
   # and they are already present on the live ISO where it runs.
   optdepends=(
@@ -30,6 +34,9 @@ package_akari-tool-cli() {
     'reflector: mirror optimization'
     'pacman-contrib: package cache cleanup'
     'vulkan-tools: functional Vulkan diagnosis'
+    'steam: game library detection and Proton install target'
+    'lutris: game library detection and Wine-GE install target'
+    'heroic-games-launcher-bin: game library detection and install target'
   )
   provides=('akari-setup')
   cd "Akari-Tool-Arch-$pkgver"

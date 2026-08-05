@@ -81,22 +81,40 @@ def get_ci(d, key):
         if k.lower() == key.lower(): return d[k]
     return None
 
-cmd, path, steamapps = sys.argv[1], sys.argv[2], sys.argv[3]
+cmd, path = sys.argv[1], sys.argv[2]
 text = open(path, encoding='utf-8', errors='replace').read()
 root_key, root = parse(tokenize(text))
-apps = root
-for part in ('Software', 'Valve', 'Steam', 'apps'):
-    apps = get_ci(apps, part) if isinstance(apps, dict) else None
-    if apps is None:
-        sys.exit('could not find apps section in localconfig.vdf')
 
-names = {}
-for m in glob.glob(os.path.join(steamapps, 'appmanifest_*.acf')):
-    try: acf = open(m, encoding='utf-8', errors='replace').read()
-    except OSError: continue
-    a = re.search(r'"appid"\s+"(\d+)"', acf)
-    nm = re.search(r'"name"\s+"((?:[^"\\]|\\.)*)"', acf)
-    if a and nm: names[a.group(1)] = nm.group(1).replace('\\"', '"')
+
+def section(*parts):
+    """Walk down a VDF tree case-insensitively, creating missing levels.
+
+    Steam varies the capitalisation of these keys between client versions,
+    and CompatToolMapping simply does not exist until the user picks a
+    compatibility tool for the first time.
+    """
+    node = root
+    for part in parts:
+        nxt = get_ci(node, part)
+        if nxt is None:
+            nxt = {}
+            node[part] = nxt
+        node = nxt
+    return node
+
+
+# localconfig.vdf holds per-game launch options; config.vdf holds the
+# compatibility-tool mapping. Same format, different trees.
+if cmd in ('list', 'set'):
+    apps = section('Software', 'Valve', 'Steam', 'apps')
+    steamapps = sys.argv[3]
+    names = {}
+    for m in glob.glob(os.path.join(steamapps, 'appmanifest_*.acf')):
+        try: acf = open(m, encoding='utf-8', errors='replace').read()
+        except OSError: continue
+        a = re.search(r'"appid"\s+"(\d+)"', acf)
+        nm = re.search(r'"name"\s+"((?:[^"\\]|\\.)*)"', acf)
+        if a and nm: names[a.group(1)] = nm.group(1).replace('\\"', '"')
 
 if cmd == 'list':
     for appid, entry in apps.items():
@@ -116,6 +134,41 @@ elif cmd == 'set':
         f.write(dump(root_key, root) + '\n')
     os.replace(tmp, path)
     print(f'OK|{names.get(appid, appid)}')
+elif cmd == 'compat-get':
+    # appid "0" is Steam's own key for "Enable Steam Play for all other
+    # titles" — the global default. Everything else is a per-game override.
+    mapping = section('Software', 'Valve', 'Steam', 'CompatToolMapping')
+    for appid, entry in mapping.items():
+        if not isinstance(entry, dict):
+            continue
+        tool = get_ci(entry, 'name') or ''
+        if tool:
+            print(f'CMP|{appid}|{tool}')
+elif cmd == 'compat-set':
+    appid, tool = sys.argv[3], sys.argv[4]
+    mapping = section('Software', 'Valve', 'Steam', 'CompatToolMapping')
+    entry = get_ci(mapping, appid)
+    if not isinstance(entry, dict):
+        entry = {}
+        mapping[appid] = entry
+    if tool:
+        # Preserve the existing key casing so a diff against Steam's own
+        # output stays quiet.
+        for k in list(entry):
+            if k.lower() in ('name', 'config', 'priority'):
+                del entry[k]
+        entry['name'] = tool
+        entry['config'] = ''
+        # Steam writes 75 for the global default and 250 for a per-game
+        # override; matching those keeps its own precedence rules intact.
+        entry['priority'] = '75' if appid == '0' else '250'
+    else:
+        mapping.pop(appid, None)
+    tmp = path + '.akari.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        f.write(dump(root_key, root) + '\n')
+    os.replace(tmp, path)
+    print(f'OK|{tool or "<cleared>"}')
 PYEOF
 }
 

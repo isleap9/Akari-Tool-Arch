@@ -11,7 +11,7 @@
 #
 set -uo pipefail   # deliberately no -e: the UI loop handles failures itself
 
-AKARI_TUI_VERSION="0.1.0"
+AKARI_TUI_VERSION="0.2.0"
 
 # ---------------------------------------------------------------- backend
 
@@ -360,67 +360,321 @@ screen_restore() {
   done
 }
 
-screen_launchopts() {
-  busy "Reading Steam library…"
-  backend steam-games
+# Undo the backend's percent-encoding of pipe-bearing fields (game titles
+# and launch strings). '%25' last, or a literal "%7C" in a title becomes a
+# separator.
+gam_dec() { local s=${1//%7C/|}; printf '%s' "${s//%25/%}"; }
+
+# Toggle list that builds a launch-options string, shared by every launcher.
+# Sets BUILT_OPTS. Returns 0 on confirm, 1 on cancel, 2 on quit.
+BUILT_OPTS=""
+build_opts_screen() {   # build_opts_screen <title> <existing-options> [hybrid]
+  local title=$1 existing=${2:-} hybrid=${3:-0}
+  BUILT_OPTS=""
   clear_list
-  local line _t appid name opts
-  local -a ids=() cur=()
+
+  # label|token-to-match|description
+  local -a rows=(
+    "GameMode|gamemoderun|Ask gamemoded to apply the performance governor while the game runs."
+    "MangoHud|mangohud|Overlay showing FPS, frametimes, CPU/GPU load."
+    "Proton Wayland|PROTON_ENABLE_WAYLAND|Native Wayland instead of XWayland. Better on Hyprland, still experimental."
+    "DLSS updater|PROTON_ENABLE_NGX_UPDATER|Let Proton keep the game's DLSS libraries current."
+    "Gamescope (fullscreen)|gamescope|Run the game inside a gamescope micro-compositor."
+  )
+  # Only meaningful with a discrete NVIDIA card alongside an integrated one.
+  (( hybrid )) && rows+=(
+    "Render on the NVIDIA GPU|__NV_PRIME_RENDER_OFFLOAD|Hybrid graphics: send this game to the discrete card instead of the iGPU."
+  )
+
+  local r label token desc
+  local -a tokens=()
+  for r in "${rows[@]}"; do
+    IFS='|' read -r label token desc <<<"$r"
+    tokens+=("$token")
+    L_LABEL+=("$label")
+    L_DESC+=("$desc")
+    L_STATE+=(""); L_TAG+=("")
+    L_SEL+=("$([[ $existing == *"$token"* ]] && echo 1 || echo 0)")
+  done
+
+  list_screen "$title" "space toggle   enter apply   esc cancel   q quit" 1
+  local rc=$?
+  (( rc != 0 )) && return $rc
+
+  # Order matters: environment first, then wrappers, and gamescope must sit
+  # immediately before %command%.
+  local env="" wrap="" i
+  for i in "${!tokens[@]}"; do
+    [[ ${L_SEL[i]} == 1 ]] || continue
+    case ${tokens[i]} in
+      __NV_PRIME_RENDER_OFFLOAD)
+        env+="__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia "
+        env+="__VK_LAYER_NV_optimus=NVIDIA_only " ;;
+      PROTON_ENABLE_WAYLAND)     env+="PROTON_ENABLE_WAYLAND=1 " ;;
+      PROTON_ENABLE_NGX_UPDATER) env+="PROTON_ENABLE_NGX_UPDATER=1 " ;;
+      gamemoderun) wrap+="gamemoderun " ;;
+      mangohud)    wrap+="mangohud " ;;
+      gamescope)   wrap+="gamescope -f -- " ;;
+    esac
+  done
+  BUILT_OPTS="${env}${wrap}"
+  # An empty string is a valid thing to apply — it clears the options.
+  [[ -n $BUILT_OPTS ]] && BUILT_OPTS+="%command%"
+  return 0
+}
+
+# True when an NVIDIA card sits alongside an integrated one. Cached: this
+# costs a full backend check, and it cannot change while the tool is open.
+HYBRID_GPU=""
+hybrid_gpu() {
+  [[ -n $HYBRID_GPU ]] && return "$HYBRID_GPU"
+  local n=0 i=0
+  backend check
+  local line k
   for line in "${RESULT[@]}"; do
-    if [[ $line == ERR\|* ]]; then
-      msgbox "Steam launch options" "Steam user data not found — is Steam installed and logged in at least once?"
+    IFS='|' read -r k _ _ <<<"$line"
+    [[ $k == gpu_nvidia ]] && n=1
+    [[ $k == gpu_amd || $k == gpu_intel ]] && i=1
+  done
+  if (( n && i )); then HYBRID_GPU=0; else HYBRID_GPU=1; fi
+  return "$HYBRID_GPU"
+}
+
+screen_games() {
+  while :; do
+    busy "Reading your game libraries…"
+    backend games
+    clear_list
+    local line _t src gid name state size runner opts
+    local -a srcs=() ids=() cur=() names=()
+    local -a notice=()
+    for line in "${RESULT[@]}"; do
+      [[ $line == GAM\|* ]] || continue
+      IFS='|' read -r _t src gid name state size runner opts <<<"$line"
+      if [[ $state == unavailable ]]; then
+        notice+=("$src: $(gam_dec "$opts")")
+        continue
+      fi
+      name=$(gam_dec "$name"); opts=$(gam_dec "$opts")
+      srcs+=("$src"); ids+=("$gid"); cur+=("$opts"); names+=("$name")
+      L_LABEL+=("$name")
+      L_TAG+=("$src")
+      L_STATE+=("$([[ -n $opts ]] && echo on || echo off)")
+      if [[ -n $opts ]]; then
+        L_DESC+=("$size · runs on ${runner:--} · launch options: $opts   ·   Enter to edit them.")
+      else
+        L_DESC+=("$size · runs on ${runner:--} · no launch options set.   ·   Enter to add some.")
+      fi
+    done
+
+    if (( ${#L_LABEL[@]} == 0 )); then
+      local why="No games found."
+      (( ${#notice[@]} )) && why+=" $(printf '%s ' "${notice[@]}")"
+      why+=" Install Steam, Lutris or Heroic and launch it once so it writes its library, then come back."
+      msgbox "Games" "$why"
       return 0
     fi
-    [[ $line == SGM\|* ]] || continue
-    IFS='|' read -r _t appid name opts <<<"$line"
-    ids+=("$appid"); cur+=("$opts")
-    L_LABEL+=("$name")
-    L_STATE+=("$([[ -n $opts ]] && echo on || echo off)")
-    L_TAG+=("$appid")
-    L_DESC+=("${opts:-No launch options set.}")
-  done
-  (( ${#L_LABEL[@]} == 0 )) && { msgbox "Steam launch options" "No games found in the Steam library."; return 0; }
 
-  list_screen "Steam launch options" "enter edit   esc back   q quit"
+    list_screen "Games   ·   ${#L_LABEL[@]} installed" \
+                "enter launch options   esc back   q quit"
+    local rc=$?
+    (( rc == 2 )) && return 2
+    (( rc == 1 )) && return 0
+
+    local i=$L_INDEX
+    local src=${srcs[i]} gid=${ids[i]} gname=${names[i]} existing=${cur[i]}
+
+    # Two separate things can be changed per game: what wraps the command,
+    # and which Proton/Wine actually runs it.
+    clear_list
+    L_LABEL=("Launch options" "Compatibility tool")
+    L_DESC=(
+      "Wrap the game with gamemoderun, MangoHud, gamescope and Proton environment variables. Current: ${existing:-none}."
+      "Choose which installed Proton or Wine build this game runs on, overriding the launcher default. This is what a newly installed build needs before it has any effect."
+    )
+    L_STATE=("" ""); L_TAG=("" "")
+    list_screen "$gname" "enter select   esc back   q quit"
+    rc=$?
+    (( rc == 2 )) && return 2
+    (( rc == 1 )) && continue
+
+    if (( L_INDEX == 0 )); then
+      local hy=0; hybrid_gpu && hy=1
+      build_opts_screen "Launch options: $gname" "$existing" "$hy"
+      rc=$?
+      (( rc == 2 )) && return 2
+      (( rc == 1 )) && continue
+      do_action "Launch options: $gname" \
+                plan gameopts "$src" "$gid" "$BUILT_OPTS" \
+                -- apply gameopts "$src" "$gid" "$BUILT_OPTS"
+    else
+      screen_gamerunner "$src" "$gid" "$gname"
+      rc=$?
+      (( rc == 2 )) && return 2
+    fi
+  done
+}
+
+# Pick which installed build a single game runs on.
+screen_gamerunner() {   # screen_gamerunner <source> <id> <name>
+  local src=$1 gid=$2 gname=$3
+  busy "Reading installed builds…"
+  # The backend already knows which builds exist for which launcher; asking
+  # it beats re-deriving the directory layout here.
+  backend proton
+  clear_list
+  local line _t kind track name target size detail
+  local -a builds=()
+  for line in "${RESULT[@]}"; do
+    [[ $line == PRT\|* ]] || continue
+    IFS='|' read -r _t kind track name target size detail <<<"$line"
+    [[ $kind == installed ]] || continue
+    case "$src" in
+      steam)  [[ $target == steam ]]  || continue ;;
+      lutris) [[ $target == lutris ]] || continue ;;
+      heroic) [[ $target == heroic-* ]] || continue ;;
+      *) continue ;;
+    esac
+    [[ " ${builds[*]} " == *" $name "* ]] && continue
+    builds+=("$name")
+    L_LABEL+=("$name")
+    L_STATE+=("off"); L_TAG+=("$target")
+    L_DESC+=("Run $gname on $name. Existing prefixes are kept; a large version jump can still make a game want a fresh one.")
+  done
+
+  if (( ${#builds[@]} == 0 )); then
+    msgbox "Compatibility tool" "No builds are installed for $src yet. Install one from the Proton & Wine builds screen first."
+    return 0
+  fi
+
+  list_screen "Compatibility tool: $gname" "enter use it   esc back   q quit"
   local rc=$?
   (( rc == 2 )) && return 2
   (( rc == 1 )) && return 0
 
-  local i=$L_INDEX appid="${ids[i]}" gname="${L_LABEL[i]}" existing="${cur[i]}"
-
-  # toggle builder
-  clear_list
-  local -a tok=("gamemoderun" "mangohud" "gamescope -f --")
-  local -a tdesc=(
-    "Ask gamemoded to apply the performance governor while the game runs."
-    "Overlay showing FPS, frametimes, CPU/GPU load."
-    "Run the game inside a gamescope micro-compositor, fullscreen."
-  )
-  local t
-  for t in "${!tok[@]}"; do
-    L_LABEL+=("${tok[t]}")
-    L_DESC+=("${tdesc[t]}")
-    L_STATE+=(""); L_TAG+=("")
-    L_SEL+=("$([[ $existing == *"${tok[t]%% *}"* ]] && echo 1 || echo 0)")
-  done
-
-  list_screen "Launch options: $gname" \
-              "space toggle   enter apply   esc cancel   q quit" 1
-  rc=$?
-  (( rc == 2 )) && return 2
-  (( rc == 1 )) && return 0
-
-  # gamescope must sit last, immediately before %command%
-  local built=""
-  [[ ${L_SEL[0]} == 1 ]] && built+="gamemoderun "
-  [[ ${L_SEL[1]} == 1 ]] && built+="mangohud "
-  [[ ${L_SEL[2]} == 1 ]] && built+="gamescope -f -- "
-  built+="%command%"
-  [[ $built == "%command%" ]] && built=""
-
-  do_action "Launch options: $gname" \
-            plan launchopts "$appid" "$built" -- apply launchopts "$appid" "$built"
+  local b=${builds[L_INDEX]}
+  do_action "Run $gname on $b" \
+            plan gamerunner "$src" "$gid" "$b" \
+            -- apply gamerunner "$src" "$gid" "$b"
   return 0
+}
+
+# Set by default_for(); avoids a subshell so the caller can read it too.
+_dflt=""
+# Sets the global _dflt. Deliberately not echoed: reading it through a
+# command substitution would run in a subshell and lose the assignment,
+# and the caller needs the value in two places.
+default_for() {   # default_for <target>   (reads dtarget/dbuild from caller)
+  local i
+  _dflt=""
+  for i in "${!dtarget[@]}"; do
+    if [[ ${dtarget[i]} == "$1" ]]; then _dflt=${dbuild[i]}; break; fi
+  done
+}
+
+screen_proton() {
+  while :; do
+    busy "Checking Proton builds (this may hit the network)…"
+    backend proton
+    clear_list
+    local line _t kind track name target size detail
+    local -a kinds=() tracks=() names=() targets=()
+    local -a errs=()
+    # target -> build it currently uses. Kept as two parallel lists because
+    # bash 4 associative arrays are avoidable here and this stays portable.
+    local -a dtarget=() dbuild=()
+
+    # A leading action row: pruning is the thing people need and never find,
+    # because each build is well over a gigabyte.
+    kinds+=("prune"); tracks+=("-"); names+=("-"); targets+=("-")
+    L_LABEL+=("Prune old builds")
+    L_TAG+=("cleanup")
+    L_STATE+=("")
+    L_DESC+=("Keep only the two newest builds per launcher and delete the rest. Each GE build is roughly 1.5 GB, so this is usually the largest thing Akari can free.")
+
+    # Two passes: the default lines have to be known before the installed
+    # ones are rendered, and the backend emits them interleaved.
+    for line in "${RESULT[@]}"; do
+      [[ $line == PRT\|* ]] || continue
+      IFS='|' read -r _t kind track name target size detail <<<"$line"
+      [[ $kind == default ]] && { dtarget+=("$target"); dbuild+=("$name"); }
+    done
+
+    for line in "${RESULT[@]}"; do
+      [[ $line == PRT\|* ]] || continue
+      IFS='|' read -r _t kind track name target size detail <<<"$line"
+      case $kind in
+        default)
+          # detail carries ok|missing|none
+          [[ $detail == missing ]] && errs+=("$target is set to use $name, but that build is not installed any more — it will fall back to its own Proton/Wine until you pick another")
+          continue ;;
+        error)
+          errs+=("$track: $detail") ;;
+        installed)
+          kinds+=("installed"); tracks+=("$track"); names+=("$name"); targets+=("$target")
+          L_LABEL+=("$name")
+          default_for "$target"
+          if [[ $_dflt == "$name" ]]; then
+            L_TAG+=("$target · in use")
+            L_STATE+=("on")
+            L_DESC+=("Installed for $target ($size) and currently in use by default. Enter to remove it or switch away.")
+          else
+            L_TAG+=("$target")
+            L_STATE+=("on")
+            L_DESC+=("Installed for $target ($size) at $detail, but NOT in use — $target still runs games on ${_dflt:-its stock Proton/Wine}. Enter to start using it, or to remove it.")
+          fi ;;
+        remote)
+          kinds+=("remote"); tracks+=("$track"); names+=("$name"); targets+=("$target")
+          L_LABEL+=("$name")
+          L_TAG+=("$target")
+          L_STATE+=("off")
+          L_DESC+=("Available for $target ($track). Enter to download it, verify its sha512sum, unpack it as your user and start using it. Installing alone never switches anything — that is why a new build can look like it did nothing.") ;;
+      esac
+    done
+
+    if (( ${#errs[@]} )); then
+      msgbox "Proton" "$(printf '%s. ' "${errs[@]}")If a network error is listed, GitHub allows 60 requests an hour without a login — wait a few minutes and try again. Anything already installed is still listed."
+    fi
+
+    list_screen "Proton & Wine builds" "enter use/install/remove   esc back   q quit"
+    local rc=$?
+    (( rc == 2 )) && return 2
+    (( rc == 1 )) && return 0
+
+    local i=$L_INDEX
+    case ${kinds[i]} in
+      prune)
+        do_action "Prune old builds" plan proton-prune 2 -- apply proton-prune 2 ;;
+      installed)
+        # Two very different things to do with an installed build, so ask.
+        clear_list
+        L_LABEL=("Use it by default" "Remove it")
+        L_DESC=(
+          "Point ${targets[i]} at ${names[i]} for every game without its own override. This is the step that actually makes a newly installed build take effect."
+          "Delete ${names[i]} from disk. Games still set to use it fall back to the launcher's own Proton/Wine."
+        )
+        L_STATE=("" ""); L_TAG=("" "")
+        list_screen "${names[i]}" "enter select   esc back   q quit"
+        local arc=$?
+        (( arc == 2 )) && return 2
+        (( arc == 1 )) && continue
+        if (( L_INDEX == 0 )); then
+          do_action "Use ${names[i]} by default" \
+                    plan compat-default "${targets[i]}" "${names[i]}" \
+                    -- apply compat-default "${targets[i]}" "${names[i]}"
+        else
+          do_action "Remove ${names[i]}" \
+                    plan proton-remove "${names[i]}" "${targets[i]}" \
+                    -- apply proton-remove "${names[i]}" "${targets[i]}"
+        fi ;;
+      remote)
+        # Install and select in one step: installing alone is exactly the
+        # thing that leaves people wondering why nothing changed.
+        do_action "Install and use ${names[i]}" \
+                  plan proton-install "${tracks[i]}" "${names[i]}" "${targets[i]}" \
+                  -- apply proton-install "${tracks[i]}" "${names[i]}" "${targets[i]}" default ;;
+    esac
+  done
 }
 
 # ---------------------------------------------------------------- menus
@@ -505,11 +759,12 @@ menu_main() {
     L_LABEL=(
       "System overview"
       "Gaming setup"
+      "Games"
+      "Proton & Wine builds"
       "Applications"
       "Kernels"
       "Maintenance"
       "Diagnose"
-      "Steam launch options"
       "Restore backups"
       "Change log"
       "Quit"
@@ -517,16 +772,17 @@ menu_main() {
     L_DESC=(
       "Everything Akari checks about this machine: Arch, network, multilib, CPU, RAM, GPU and drivers, the gaming stack, Proton, AUR helper, tweaks, mirrors, cache, snapshots and pending updates."
       "Install and configure the gaming stack — the same actions the GUI's Gaming page offers."
+      "Your installed games from Steam, Lutris and Heroic in one list, with the compatibility tool each one runs on, and a toggle builder that writes launch options straight into the right launcher's config."
+      "Download GE-Proton and Wine-GE builds from GitHub into the directory each launcher scans, verified against the published checksum. Also prunes old builds, which is usually the biggest space win available."
       "Every package and Flatpak you explicitly installed, with sizes, and a safe uninstaller that refuses to touch critical system packages."
       "Install or remove additional kernels alongside your current one. Nothing is ever replaced; you pick the new one from the boot menu."
       "Updates, mirror ranking, cache cleanup, snapshots and self-update."
       "Functional tests, not just package presence: does Vulkan actually answer in both bitnesses, is the discrete GPU visible, did the dkms modules build, is audio up, are controllers usable."
-      "Browse your Steam library and set per-game launch options from a toggle list."
       "Every file Akari edited has a .akari.bak beside it. This lists them and puts any of them back."
       "A timestamped record of everything this tool has changed on this system."
       "Leave the tool."
     )
-    local i; for i in {0..9}; do L_STATE+=(""); L_TAG+=(""); done
+    local i; for i in "${!L_LABEL[@]}"; do L_STATE+=(""); L_TAG+=(""); done
 
     list_screen "Home" "↑↓ move   enter select   q quit"
     local rc=$?
@@ -537,14 +793,15 @@ menu_main() {
     case $L_INDEX in
       0) screen_overview;   out=$? ;;
       1) menu_gaming;       out=$? ;;
-      2) screen_apps;       out=$? ;;
-      3) screen_kernels;    out=$? ;;
-      4) menu_maintenance;  out=$? ;;
-      5) screen_diagnose;   out=$? ;;
-      6) screen_launchopts; out=$? ;;
-      7) screen_restore;    out=$? ;;
-      8) screen_changelog;  out=$? ;;
-      9) return 0 ;;
+      2) screen_games;      out=$? ;;
+      3) screen_proton;     out=$? ;;
+      4) screen_apps;       out=$? ;;
+      5) screen_kernels;    out=$? ;;
+      6) menu_maintenance;  out=$? ;;
+      7) screen_diagnose;   out=$? ;;
+      8) screen_restore;    out=$? ;;
+      9) screen_changelog;  out=$? ;;
+      10) return 0 ;;
     esac
     (( out == 2 )) && return 0
   done

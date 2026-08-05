@@ -25,7 +25,7 @@ unset _mod
 
 # ---------------------------------------------------------------- dispatch
 
-AKARI_VERSION="0.3.3"
+AKARI_VERSION="0.5.1"
 
 case "${1:-}" in
   --version|-V) echo "akari-setup $AKARI_VERSION" ;;
@@ -40,6 +40,8 @@ akari-setup — Akari Tool Linux backend (works standalone, no GUI needed)
   apps                           everything the user installed (for the Apps page)
   restore-list                   backups available to restore
   steam-games                    Steam library with current launch options
+  games                          all installed games (Steam, Lutris, Heroic)
+  proton                         Proton-GE / Wine-GE builds, installed and available
   log                            everything this tool changed
   plan  <target>                 dry-run: what an apply would do
   apply <target>                 do it (uses sudo per command)
@@ -47,6 +49,10 @@ akari-setup — Akari Tool Linux backend (works standalone, no GUI needed)
   targets: gaming, multilib, tweaks, sysupdate, all,
            paru, mirrors, cleanup, snapshot, flatpak-setup, flatpak <appid...>, self-update,
            kernel <name>, remove-kernel <name>, launchopts <appid> "<options>",
+           gameopts <source> <id> "<options>",
+           gamerunner <source> <id> <build>, compat-default <target> <build>,
+           proton-install <track> <build> <target> [default],
+           proton-remove <build> <target>, proton-prune [keep],
            selected <pkg...>, remove <pkg...>, restore <backup-id>
 HELP
     ;;
@@ -57,6 +63,8 @@ HELP
   apps)     cmd_apps ;;
   restore-list) cmd_restore_list ;;
   steam-games)  cmd_steam_games ;;
+  games)    cmd_games ;;
+  proton)   cmd_proton ;;
   log)      cmd_log ;;
   plan)   case "${2:-gaming}" in
             gaming)        plan_gaming ;;
@@ -70,6 +78,12 @@ HELP
             flatpak-setup) plan_flatpak_setup ;;
             self-update)   plan_self_update ;;
             launchopts)    plan_launchopts "${3:-}" "${4:-}" ;;
+            gameopts)      plan_gameopts "${3:-}" "${4:-}" "${5:-}" ;;
+            proton-install) plan_proton_install "${3:-}" "${4:-}" "${5:-}" ;;
+            compat-default) plan_compat_default "${3:-}" "${4:-}" ;;
+            gamerunner)     plan_gamerunner "${3:-}" "${4:-}" "${5:-}" ;;
+            proton-remove)  plan_proton_remove "${3:-}" "${4:-}" ;;
+            proton-prune)   plan_proton_prune "${3:-2}" ;;
             mirrors)       plan_mirrors ;;
             cleanup)       plan_cleanup ;;
             all)           plan_all ;;
@@ -89,6 +103,12 @@ HELP
             flatpak-setup) apply_flatpak_setup ;;
             self-update)   apply_self_update ;;
             launchopts)    apply_launchopts "${3:-}" "${4:-}" ;;
+            gameopts)      apply_gameopts "${3:-}" "${4:-}" "${5:-}" ;;
+            proton-install) apply_proton_install "${3:-}" "${4:-}" "${5:-}" "${6:-}" ;;
+            compat-default) apply_compat_default "${3:-}" "${4:-}" ;;
+            gamerunner)     apply_gamerunner "${3:-}" "${4:-}" "${5:-}" ;;
+            proton-remove)  apply_proton_remove "${3:-}" "${4:-}" ;;
+            proton-prune)   apply_proton_prune "${3:-2}" ;;
             flatpak)       shift 2; apply_flatpak "$@" ;;
             mirrors)       apply_mirrors ;;
             cleanup)       apply_cleanup ;;

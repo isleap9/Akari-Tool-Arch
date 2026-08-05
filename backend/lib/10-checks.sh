@@ -178,12 +178,19 @@ proton_installed_version() {
 
 check_proton() {
   local v; v=$(proton_installed_version)
+  # Cache-only lookup: never let a slow GitHub round-trip stall the Overview.
+  local latest; latest=$(PROTON_OFFLINE=1 proton_latest_remote proton-ge 2>/dev/null) || latest=""
   if [[ -n "$v" ]]; then
-    emit proton ok "$v installed"
+    if [[ -n "$latest" && "$latest" != "$v" ]] \
+       && [[ "$(printf '%s\n%s\n' "$v" "$latest" | sort -V | tail -1)" == "$latest" ]]; then
+      emit proton info "$v installed — $latest is available on the Proton page"
+    else
+      emit proton ok "$v installed"
+    fi
   elif is_installed protonup-qt; then
-    emit proton warn "No custom Proton yet — open ProtonUp-Qt to install GE-Proton"
+    emit proton warn "No custom Proton yet — install one from the Proton page, or open ProtonUp-Qt"
   else
-    emit proton warn "Proton-GE not installed (Steam's built-in Proton still works)"
+    emit proton warn "Proton-GE not installed — the Proton page can fetch it (Steam's built-in Proton still works)"
   fi
 }
 

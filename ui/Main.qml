@@ -66,13 +66,15 @@ ApplicationWindow {
     }
 
     readonly property var pageTitles: [
-        "Overview", "Gaming Packages", "Launch Options", "Apps",
-        "Kernel", "Maintenance", "Diagnose", "Restore", "Change Log"
+        "Overview", "Gaming Packages", "Games", "Proton", "Launch Options",
+        "Apps", "Kernel", "Maintenance", "Diagnose", "Restore", "Change Log"
     ]
     readonly property var pageSubtitles: [
         "Gaming setup for vanilla Arch — dependencies, drivers & tweaks",
         "Pick exactly what gets installed — missing packages are pre-selected",
-        "Build a Steam launch options string from toggles",
+        "Your library across Steam, Lutris and Heroic — with per-game launch options",
+        "Install GE-Proton and Wine-GE builds for each launcher",
+        "Build a launch options string from toggles",
         "Everything installed on this machine — search & uninstall",
         "Install an alternative kernel for gaming or stability",
         "One-click upkeep — AUR helper, mirrors & cleanup",
@@ -157,45 +159,55 @@ ApplicationWindow {
                     onNavigate: root.currentPage = 1
                 }
                 NavItem {
-                    label: "Launch Options"; glyph: "\u2318"
+                    label: "Games"; glyph: "\u2726"
                     selected: root.currentPage === 2 && !root.showLog
                     onNavigate: root.currentPage = 2
                 }
                 NavItem {
-                    label: "Apps"; glyph: "\u25A6"
+                    label: "Proton"; glyph: "\u2B21"
                     selected: root.currentPage === 3 && !root.showLog
                     onNavigate: root.currentPage = 3
+                }
+                NavItem {
+                    label: "Launch Options"; glyph: "\u2318"
+                    selected: root.currentPage === 4 && !root.showLog
+                    onNavigate: root.currentPage = 4
+                }
+                NavItem {
+                    label: "Apps"; glyph: "\u25A6"
+                    selected: root.currentPage === 5 && !root.showLog
+                    onNavigate: root.currentPage = 5
                 }
 
                 SectionLabel { text: "OPTIMIZE" }
                 NavItem {
                     label: "Kernel"; glyph: "\u2699"
-                    selected: root.currentPage === 4 && !root.showLog
-                    onNavigate: root.currentPage = 4
+                    selected: root.currentPage === 6 && !root.showLog
+                    onNavigate: root.currentPage = 6
                 }
                 NavItem {
                     label: "Maintenance"; glyph: "\u2692"
-                    selected: root.currentPage === 5 && !root.showLog
-                    onNavigate: root.currentPage = 5
+                    selected: root.currentPage === 7 && !root.showLog
+                    onNavigate: root.currentPage = 7
                 }
 
                 SectionLabel { text: "HEALTH" }
                 NavItem {
                     label: "Diagnose"; glyph: "\u2695"
-                    selected: root.currentPage === 6 && !root.showLog
-                    onNavigate: root.currentPage = 6
+                    selected: root.currentPage === 8 && !root.showLog
+                    onNavigate: root.currentPage = 8
                 }
 
                 SectionLabel { text: "ADVANCED" }
                 NavItem {
                     label: "Restore"; glyph: "\u21BA"
-                    selected: root.currentPage === 7 && !root.showLog
-                    onNavigate: root.currentPage = 7
+                    selected: root.currentPage === 9 && !root.showLog
+                    onNavigate: root.currentPage = 9
                 }
                 NavItem {
                     label: "Change Log"; glyph: "\u2630"
-                    selected: root.currentPage === 8 && !root.showLog
-                    onNavigate: root.currentPage = 8
+                    selected: root.currentPage === 10 && !root.showLog
+                    onNavigate: root.currentPage = 10
                 }
 
                 Item { Layout.fillHeight: true }
@@ -207,7 +219,7 @@ ApplicationWindow {
                     color: "#1A1A1E"
                 }
                 Label {
-                    text: "v0.3 · bash backend"
+                    text: "v0.5 · bash backend"
                     font.family: Theme.monoFont
                     font.pixelSize: Theme.fsMicro
                     color: Theme.textFaint
@@ -386,10 +398,12 @@ ApplicationWindow {
             StackLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                currentIndex: root.showLog ? 9 : root.currentPage
+                currentIndex: root.showLog ? 11 : root.currentPage
 
                 OverviewPage      { confirmDialog: confirmDlg }
                 GamingPage        { confirmDialog: confirmDlg }
+                GamesPage         { confirmDialog: confirmDlg }
+                ProtonPage        { confirmDialog: confirmDlg }
                 LaunchOptionsPage { confirmDialog: confirmDlg }
                 AppsPage          { confirmDialog: confirmDlg }
                 KernelPage        { confirmDialog: confirmDlg }

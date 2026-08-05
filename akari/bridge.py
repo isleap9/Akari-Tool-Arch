@@ -4,6 +4,8 @@ Owns all backend communication: runs akari-setup.sh via QProcess and
 routes its output by mode:
   check    -> status map (Overview cards)
   packages -> package list (Gaming page)
+  games    -> unified games list (Games page)
+  proton   -> Proton/Wine-GE builds (Proton page)
   kernels  -> kernel list (Kernel page)
   plan     -> planText (confirmation dialog)
   log      -> changeLog (Change Log page)
@@ -21,6 +23,16 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BACKEND_SCRIPT = PROJECT_ROOT / "backend" / "akari-setup.sh"
 
 
+def _dec(field: str) -> str:
+    """Undo the backend's percent-encoding of pipe-bearing fields.
+
+    Game titles ("Fortnite | Battle Royale") and launch strings both contain
+    pipes, so the games protocol encodes them. '%25' must be decoded last or
+    a literal "%7C" in a title turns into a separator.
+    """
+    return field.replace("%7C", "|").replace("%25", "%")
+
+
 class Bridge(QObject):
     statusChanged = Signal()
     runningChanged = Signal()
@@ -32,6 +44,8 @@ class Bridge(QObject):
     diagnosticsChanged = Signal()
     restoreItemsChanged = Signal()
     steamGamesChanged = Signal()
+    gamesChanged = Signal()
+    protonChanged = Signal()
     planChanged = Signal()
     changeLogChanged = Signal()
 
@@ -44,6 +58,9 @@ class Bridge(QObject):
         self._diagnostics: list = []  # [{"key","state","title","detail","fix"}]
         self._restore: list = []      # [{"id","backup","original","when"}]
         self._steam_games: list = []  # [{"appid","name","launchOptions"}]
+        self._games: list = []      # [{"source","id","name","state","size",
+                                    #   "runner","launchOptions"}]
+        self._proton: list = []     # [{"kind","track","name","target","size","detail"}]
         self._running = False
         self._applying = False
         self._log = ""
@@ -103,6 +120,14 @@ class Bridge(QObject):
     @Property("QVariantList", notify=steamGamesChanged)
     def steamGames(self):
         return self._steam_games
+
+    @Property("QVariantList", notify=gamesChanged)
+    def games(self):
+        return self._games
+
+    @Property("QVariantList", notify=protonChanged)
+    def protonBuilds(self):
+        return self._proton
 
     # ---- slots callable from QML ----------------------------------------
     @Slot(str, str)
@@ -196,6 +221,51 @@ class Bridge(QObject):
         self._enqueue(["apply", "launchopts", appid, options])
 
     @Slot()
+    def refreshGames(self):
+        self._enqueue(["games"])
+
+    @Slot()
+    def refreshProton(self):
+        self._enqueue(["proton"])
+
+    @Slot(str, str, str)
+    def applyGameOptions(self, source: str, gid: str, options: str):
+        """Write launch options back to whichever launcher owns the game.
+
+        All three targets are files under the user's own home, so this never
+        goes through pkexec (see _start's needs_root)."""
+        self._enqueue(["apply", "gameopts", source, gid, options])
+
+    @Slot(str, str, str, bool)
+    def installProton(self, track: str, build: str, target: str,
+                      makeDefault: bool = False):
+        """Install a build, optionally selecting it in the same step.
+
+        Installing alone only makes a build available — no launcher switches
+        to a newer one on its own, so without the second step nothing about
+        the system appears to change."""
+        args = ["apply", "proton-install", track, build, target]
+        if makeDefault:
+            args.append("default")
+        self._enqueue(args)
+
+    @Slot(str, str)
+    def setCompatDefault(self, target: str, build: str):
+        self._enqueue(["apply", "compat-default", target, build])
+
+    @Slot(str, str, str)
+    def setGameRunner(self, source: str, gid: str, build: str):
+        self._enqueue(["apply", "gamerunner", source, gid, build])
+
+    @Slot(str, str)
+    def removeProton(self, build: str, target: str):
+        self._enqueue(["apply", "proton-remove", build, target])
+
+    @Slot(int)
+    def pruneProton(self, keep: int):
+        self._enqueue(["apply", "proton-prune", str(keep)])
+
+    @Slot()
     def refreshChangeLog(self):
         self._changelog = ""
         self._enqueue(["log"])
@@ -215,7 +285,13 @@ class Bridge(QObject):
     def _start(self, args: list):
         self._mode = args[0]
         self._proc = QProcess(self)
-        needs_root = args[0] == "apply" and args[1:2] != ["launchopts"]
+        # These applies only ever touch files the user already owns. Running
+        # them through pkexec would be worse than pointless: root-owned
+        # entries in compatibilitytools.d are silently ignored by Steam, and
+        # a root-written game config locks the user out of their own file.
+        user_only = {"launchopts", "gameopts", "gamerunner", "compat-default",
+                     "proton-install", "proton-remove", "proton-prune"}
+        needs_root = args[0] == "apply" and args[1:2] and args[1] not in user_only
         if needs_root and shutil.which("pkexec"):
             # One polkit prompt for the whole apply; the script runs as
             # root with the real user's identity passed through.
@@ -245,6 +321,10 @@ class Bridge(QObject):
             self._restore = []
         elif args[0] == "steam-games":
             self._steam_games = []
+        elif args[0] == "games":
+            self._games = []
+        elif args[0] == "proton":
+            self._proton = []
         self._set_running(True, applying=(args[0] == "apply"))
         self._proc.start()
 
@@ -323,6 +403,25 @@ class Bridge(QObject):
                         {"appid": appid, "name": name,
                          "launchOptions": opts})
             self.steamGamesChanged.emit()
+        elif self._mode == "games":
+            for line in text.splitlines():
+                parts = line.split("|")
+                if len(parts) == 8 and parts[0] == "GAM":
+                    _, src, gid, name, state, size, runner, opts = parts
+                    self._games.append(
+                        {"source": src, "id": gid, "name": _dec(name),
+                         "state": state, "size": size, "runner": runner,
+                         "launchOptions": _dec(opts)})
+            self.gamesChanged.emit()
+        elif self._mode == "proton":
+            for line in text.splitlines():
+                parts = line.split("|", 6)
+                if len(parts) == 7 and parts[0] == "PRT":
+                    _, kind, track, name, target, size, detail = parts
+                    self._proton.append(
+                        {"kind": kind, "track": track, "name": name,
+                         "target": target, "size": size, "detail": detail})
+            self.protonChanged.emit()
         elif self._mode == "plan":
             self._plan += text
             self.planChanged.emit()
@@ -354,6 +453,8 @@ class Bridge(QObject):
         if was_apply:
             # refresh every view after an apply
             self._queue.insert(0, ["restore-list"])
+            self._queue.insert(0, ["proton"])
+            self._queue.insert(0, ["games"])
             self._queue.insert(0, ["steam-games"])
             self._queue.insert(0, ["log"])
             self._queue.insert(0, ["kernels"])

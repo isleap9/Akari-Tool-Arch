@@ -11,3 +11,5 @@ Badge 1.0 Badge.qml
 StatusCard 1.0 StatusCard.qml
 SectionLabel 1.0 SectionLabel.qml
 ConfirmDialog 1.0 ConfirmDialog.qml
+FilterChip 1.0 FilterChip.qml
+LaunchOptionsBuilder 1.0 LaunchOptionsBuilder.qml

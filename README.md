@@ -45,9 +45,23 @@ record every change after.**
   64 *and* 32 bit, is the discrete GPU visible, are dkms modules built for
   every kernel, is audio alive (incl. lib32), controllers detected and
   permissioned, Steam-on-NTFS, Hyprland gaming settings
+- **Games page** — your library from Steam, Lutris and Heroic in one searchable
+  list, showing which compatibility tool each game runs on. Expand a game to
+  pick which Proton/Wine build it runs on, and build its launch options from
+  toggles, written straight into the right launcher's config (safe edit with backup; refuses while that launcher is
+  running, since all three overwrite their config on exit). Unrecognised flags
+  you set by hand are preserved, not silently dropped
+- **Proton page** — install GE-Proton and Wine-GE builds from GitHub into the
+  directory each launcher scans, verified against the published sha512sum and
+  unpacked as your user (Steam ignores root-owned compatibility tools), then
+  **actually switch to them**: installing a build only makes it available, so
+  the page shows which build each launcher is using right now and offers
+  *Install & use* in one step. Warns when a launcher is pointed at a build
+  that has since been deleted, which otherwise silently falls back to stock.
+  Steam and Heroic get Proton builds, Lutris and Heroic get Wine builds.
+  One-click prune keeps the newest few — each build is ~1.5 GB
 - **Launch options builder** — compose `gamemoderun mangohud gamescope ... %command%`
-  from toggles, then apply it **directly to a Steam game** (safe VDF edit
-  with backup, refuses while Steam runs)
+  from toggles when you just want the string to paste somewhere yourself
 - **Trust layer** — every action shows its plan first, streams live output,
   logs every change, keeps backups, and offers one-click restore.
 
@@ -71,7 +85,16 @@ The backend works standalone with no GUI:
 ./backend/akari-setup.sh plan cleanup    # what would cleanup remove?
 ./backend/akari-setup.sh apply mirrors   # rank the fastest mirrors
 ./backend/akari-setup.sh plan remove lutris   # preview an uninstall
+./backend/akari-setup.sh games                # every installed game, all launchers
+./backend/akari-setup.sh proton               # Proton/Wine builds, installed + available
+./backend/akari-setup.sh apply proton-install proton-ge GE-Proton10-6 steam default
+./backend/akari-setup.sh apply compat-default steam GE-Proton10-6   # switch to it
+./backend/akari-setup.sh apply gamerunner steam 1091500 GE-Proton10-6   # one game
+./backend/akari-setup.sh apply gameopts steam 1091500 "gamemoderun mangohud %command%"
 ```
+
+The Proton and Games commands need no root at all — they only ever touch files
+your user already owns.
 
 ## Architecture
 
@@ -79,7 +102,8 @@ The backend works standalone with no GUI:
 backend/akari-setup.sh   bash    — entry point: shell options, module loader, dispatch
 backend/lib/*.sh         bash    — ALL system logic, one module per concern
                                     (core, checks, kernels, plans, diagnose,
-                                     steam, maintenance, ...), sourced in order
+                                     steam, proton, games, maintenance, ...),
+                                     sourced in order
 akari/                   python  — thin Qt host (QProcess bridge, no logic)
 ui/                      QML     — Material dark UI (components + pages)
 packaging/               —       — PKGBUILD, .desktop, icon
