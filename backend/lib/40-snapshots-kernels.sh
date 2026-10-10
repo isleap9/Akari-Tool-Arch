@@ -223,7 +223,7 @@ apply_selected() {
   grep -Eq '^\s*\[multilib\]' /etc/pacman.conf 2>/dev/null || apply_multilib
 
   local repo=() aurp=() flat=() p entry
-  local known_aur=" ${PKGS_AUR_OPTIONAL[*]} ${PKGS_APPS_AUR[*]} "
+  local known_aur=" ${PKGS_AUR_OPTIONAL[*]} ${PKGS_APPS_AUR[*]} ${PKGS_AUR_DEPS[*]} ${PKGS_AUR_CONTROLLER[*]} "
   local known_flat=" "
   for entry in "${FLATPAK_APPS[@]}"; do known_flat+="${entry%%|*} "; done
   for p in "$@"; do

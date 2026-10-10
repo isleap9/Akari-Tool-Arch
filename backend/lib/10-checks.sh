@@ -131,7 +131,13 @@ check_ram() {
 }
 
 check_gaming() {
-  local all=( "${PKGS_CORE[@]}" "${PKGS_DEPS[@]}" "${PKGS_FONTS[@]}" )
+  local all=( "${PKGS_CORE[@]}" "${PKGS_DEPS[@]}" "${PKGS_FONTS[@]}"
+              "${PKGS_AUDIO[@]}" )
+  # AUR-only deps count toward completeness only when a helper can install
+  # them; otherwise the card would show "incomplete" forever.
+  if command -v paru &>/dev/null || command -v yay &>/dev/null; then
+    all+=( "${PKGS_AUR_DEPS[@]}" )
+  fi
   local missing; missing=$(missing_from "${all[@]}")
   local total=${#all[@]}
   local nmiss=0
@@ -248,9 +254,13 @@ check_mirrors() {
 }
 
 check_cache() {
+  # Both commands can exit non-zero without anything being wrong:
+  # du fails on root-only temp dirs inside the cache, and `pacman -Qtdq`
+  # exits 1 when there are no orphans. Under `set -e` an unguarded
+  # assignment would abort the whole `check` run, so tolerate failure here.
   local mib orph
-  mib=$(du -sm /var/cache/pacman/pkg 2>/dev/null | cut -f1); mib=${mib:-0}
-  orph=$(pacman -Qtdq 2>/dev/null | wc -l)
+  mib=$(du -sm /var/cache/pacman/pkg 2>/dev/null | cut -f1 || true); mib=${mib:-0}
+  orph=$(pacman -Qtdq 2>/dev/null | wc -l || true); orph=${orph:-0}
   if (( mib > 5120 || orph > 0 )); then
     emit cache warn "Package cache: ${mib} MiB, orphans: $orph — cleanup recommended"
   else
@@ -297,7 +307,8 @@ cmd_packages() {
   done
   for p in "${PKGS_APPS_REPO[@]}";  do emit_pkg apps  "$p"; done
   for p in "${PKGS_AUDIO[@]}";      do emit_pkg audio "$p"; done
-  for p in "${PKGS_CONTROLLER[@]}"; do emit_pkg input "$p"; done
+  for p in "${PKGS_AUR_DEPS[@]}";   do emit_pkg deps  "$p"; done
+  for p in "${PKGS_AUR_CONTROLLER[@]}"; do emit_pkg input "$p"; done
   if command -v paru &>/dev/null || command -v yay &>/dev/null; then
     for p in "${PKGS_AUR_OPTIONAL[@]}"; do emit_pkg aur "$p"; done
     for p in "${PKGS_APPS_AUR[@]}";    do emit_pkg aur "$p"; done

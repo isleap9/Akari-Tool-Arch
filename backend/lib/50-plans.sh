@@ -22,8 +22,12 @@ plan_gaming() {
     [[ -n "$m" ]] && { echo "GPU ($v) drivers to install:"; echo "$m" | sed 's/^/  /'; }
   done
   if command -v paru &>/dev/null || command -v yay &>/dev/null; then
-    m=$(missing_from "${PKGS_AUR_OPTIONAL[@]}")
-    [[ -n "$m" ]] && { echo "Optional (AUR):"; echo "$m" | sed 's/^/  /'; }
+    local aurpkgs; mapfile -t aurpkgs < <(aur_gaming_pkgs)
+    m=$(missing_from "${aurpkgs[@]}")
+    [[ -n "$m" ]] && { echo "Will install (AUR):"; echo "$m" | sed 's/^/  /'; }
+  else
+    echo "No AUR helper — these AUR-only packages would be skipped:"
+    aur_gaming_pkgs | sed 's/^/  /'
   fi
 }
 
@@ -43,8 +47,9 @@ apply_gaming() {
   # multilib is a hard prerequisite
   grep -Eq '^\s*\[multilib\]' /etc/pacman.conf 2>/dev/null || apply_multilib
 
+  # Repo packages only — AUR-only deps are handled by the helper further down.
   local vendors v pkgs=( "${PKGS_CORE[@]}" "${PKGS_DEPS[@]}" "${PKGS_FONTS[@]}"
-                         "${PKGS_AUDIO[@]}" "${PKGS_CONTROLLER[@]}" )
+                         "${PKGS_AUDIO[@]}" )
   vendors=$(detect_gpu)
   for v in $vendors; do
     case $v in
@@ -57,7 +62,7 @@ apply_gaming() {
 
   local missing; missing=$(missing_from "${pkgs[@]}")
   if [[ -z "$missing" ]]; then
-    echo ":: All gaming packages already installed."
+    echo ":: All repo gaming packages already installed."
   else
     snapper_note "gaming setup"
     echo ":: Installing $(wc -l <<<"$missing") packages via pacman"
@@ -66,23 +71,34 @@ apply_gaming() {
     log_change "installed gaming packages: $(echo $missing | tr '\n' ' ')"
   fi
 
-  # Optional AUR extras — now installed in BOTH CLI and GUI modes
-  local helper=""
+  # AUR-only deps (32-bit gif/mp3/openal, 32-bit GStreamer, controller rules)
+  # plus the optional extras — all through the helper in one transaction.
+  local helper="" aurpkgs aur_missing
   command -v paru &>/dev/null && helper=paru
   [[ -z "$helper" ]] && command -v yay &>/dev/null && helper=yay
-  if [[ -n "$helper" ]]; then
-    missing=$(missing_from "${PKGS_AUR_OPTIONAL[@]}")
-    if [[ -n "$missing" ]]; then
-      echo ":: Installing optional AUR packages via $helper"
-      # shellcheck disable=SC2086
-      if run_aur "$helper" -S --needed --noconfirm $missing; then
-        log_change "installed AUR extras: $(echo $missing | tr '\n' ' ')"
-      else
-        echo ":: (AUR extras failed — continuing, they are optional)"
-      fi
+  mapfile -t aurpkgs < <(aur_gaming_pkgs)
+  aur_missing=$(missing_from "${aurpkgs[@]}")
+  if [[ -z "$aur_missing" ]]; then
+    :
+  elif [[ -n "$helper" ]]; then
+    echo ":: Installing $(wc -l <<<"$aur_missing") AUR packages via $helper"
+    # shellcheck disable=SC2086
+    if run_aur "$helper" -S --needed --noconfirm $aur_missing; then
+      log_change "installed AUR gaming packages: $(echo $aur_missing | tr '\n' ' ')"
+    else
+      echo ":: (AUR install failed — continuing, these are optional at runtime)"
     fi
   else
-    echo ":: No AUR helper found — skipping optional extras (Heroic, ProtonUp-Qt, GOverlay)"
+    echo ":: No AUR helper found — skipping AUR-only packages:"
+    echo "$aur_missing" | sed 's/^/     /'
+    echo ":: Install an AUR helper (paru/yay) to get controllers and 32-bit media libs."
+  fi
+
+  # Controller access needs the input group once the udev rules are present.
+  if is_installed game-devices-udev && ! id -nG "$RUN_USER" | grep -qw input; then
+    echo ":: Adding $RUN_USER to input group for controller access (takes effect next login)"
+    run_root usermod -aG input "$RUN_USER"
+    log_change "added $RUN_USER to input group"
   fi
 
   echo ":: Gaming setup complete."

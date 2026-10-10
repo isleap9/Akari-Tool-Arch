@@ -60,16 +60,36 @@ PKGS_CORE=(
   gamescope mangohud lib32-mangohud gamemode lib32-gamemode vulkan-tools
 )
 
+# Repo packages only: every entry here must resolve with `pacman -Si`.
+# Anything that exists only in the AUR goes in a PKGS_AUR_* array below —
+# mixing the two is what makes `pacman -S` fail with "target not found".
 PKGS_DEPS=(
-  alsa-plugins lib32-alsa-plugins giflib lib32-giflib glfw
+  alsa-plugins lib32-alsa-plugins giflib glfw
   gst-plugins-base-libs lib32-gtk3 libjpeg-turbo lib32-libjpeg-turbo
-  libva lib32-libva mpg123 lib32-mpg123
-  opencl-icd-loader lib32-opencl-icd-loader openal lib32-openal libxslt
+  libva lib32-libva mpg123 openal libxslt
+  ocl-icd lib32-ocl-icd                 # provide opencl-icd-loader (no such pkg)
+  gnutls lib32-gnutls freetype2 lib32-freetype2 fontconfig lib32-fontconfig
+  vulkan-icd-loader lib32-vulkan-icd-loader
+  xdg-desktop-portal                    # screen capture / Steam Link on Wayland
 )
 
 PKGS_FONTS=( ttf-liberation wqy-zenhei )
 
+# AUR-only gaming dependencies. The 32-bit gif/mp3/openal libs and the
+# 32-bit GStreamer stack are not in the repos; lib32-* AUR builds are large.
+PKGS_AUR_DEPS=(
+  lib32-giflib lib32-mpg123 lib32-openal
+  lib32-gst-plugins-base-libs lib32-gst-plugins-good lib32-gst-libav
+)
+
 PKGS_AUR_OPTIONAL=( heroic-games-launcher-bin protonup-qt goverlay )
+
+# Every AUR-only package the gaming setup touches (deps + controller rules +
+# optional extras). One source of truth for "route this through the helper".
+aur_gaming_pkgs() {
+  printf '%s\n' "${PKGS_AUR_DEPS[@]}" "${PKGS_AUR_CONTROLLER[@]}" \
+                "${PKGS_AUR_OPTIONAL[@]}"
+}
 
 # Extra apps (opt-in via the Gaming page, group "apps"/"apps_aur")
 PKGS_APPS_REPO=( obs-studio discord antimicrox )
@@ -83,7 +103,8 @@ PKGS_AUDIO=(
 )
 
 # Controllers: udev rules for gamepads/wheels + user in input group.
-PKGS_CONTROLLER=( game-devices-udev )
+# AUR-only (game-devices-udev is not in the repos).
+PKGS_AUR_CONTROLLER=( game-devices-udev )
 
 # Flatpak alternatives — same apps without needing an AUR helper.
 # Format: appid|display name

@@ -128,9 +128,11 @@ apply_mirrors() {
 # ---- maintenance / cleanup --------------------------------------------
 plan_cleanup() {
   echo "== Plan: system cleanup =="
+  # du fails on root-only temp dirs in the cache; pacman -Qtdq exits 1 when
+  # there are no orphans. Guard both so `set -e` does not abort the plan.
   local cache orph
-  cache=$(du -sh /var/cache/pacman/pkg 2>/dev/null | cut -f1)
-  orph=$(pacman -Qtdq 2>/dev/null | wc -l)
+  cache=$(du -sh /var/cache/pacman/pkg 2>/dev/null | cut -f1 || true)
+  orph=$(pacman -Qtdq 2>/dev/null | wc -l || true); orph=${orph:-0}
   echo "Will do:"
   echo "  - trim package cache to 2 most recent versions (currently ${cache:-?})"
   is_installed pacman-contrib || echo "    (installs pacman-contrib for paccache)"
@@ -148,11 +150,11 @@ apply_cleanup() {
     run_root pacman -S --needed --noconfirm pacman-contrib
   }
   local before after
-  before=$(du -sm /var/cache/pacman/pkg 2>/dev/null | cut -f1)
+  before=$(du -sm /var/cache/pacman/pkg 2>/dev/null | cut -f1 || true)
   echo ":: Trimming package cache (keeping 2 versions per package)"
   run_root paccache -rk2
   run_root paccache -ruk0   # drop cached versions of uninstalled packages
-  after=$(du -sm /var/cache/pacman/pkg 2>/dev/null | cut -f1)
+  after=$(du -sm /var/cache/pacman/pkg 2>/dev/null | cut -f1 || true)
   echo ":: Cache: ${before:-?} MiB -> ${after:-?} MiB"
 
   local orphans
